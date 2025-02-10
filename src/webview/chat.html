@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -32,6 +32,8 @@
             margin-bottom: 1rem;
             padding: 0.5rem;
             border-radius: 4px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
         }
 
         .user-message {
@@ -47,6 +49,32 @@
         .input-container {
             display: flex;
             gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .button-container {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .token-stats {
+            font-size: 0.8rem;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 0.5rem;
+            display: none;
+        }
+
+        .token-stats.active {
+            display: block;
+        }
+
+        .cancel-button {
+            background-color: var(--vscode-errorForeground);
+            display: none;
+        }
+
+        .cancel-button.active {
+            display: block;
         }
 
         textarea {
@@ -78,12 +106,9 @@
             cursor: not-allowed;
         }
 
-        .model-info {
-            margin-bottom: 1rem;
-            padding: 0.5rem;
-            background-color: var(--vscode-editor-background);
-            border: 1px solid var(--vscode-input-border);
-            border-radius: 4px;
+        .error {
+            color: var(--vscode-errorForeground);
+            margin-top: 0.5rem;
         }
     </style>
 </head>
@@ -95,118 +120,164 @@
         </div>
         <div class="chat-container" id="chatContainer"></div>
         <div class="input-container">
-            <textarea id="messageInput" placeholder="Mesajınızı yazın..."></textarea>
-            <button id="sendButton">Gönder</button>
+            <textarea id="messageInput" placeholder="Mesajınızı yazın..." rows="3"></textarea>
+            <div class="button-container">
+                <button id="sendButton" onclick="sendMessage()">Gönder</button>
+                <button id="cancelButton" class="cancel-button" onclick="cancelStream()">İptal</button>
+            </div>
+        </div>
+        <div class="token-stats" id="tokenStats">
+            <span>Token/saniye: </span>
+            <span id="tokenRate">0</span>
         </div>
     </div>
 
     <script>
-        (function() {
-            // VS Code API'sini güvenli bir şekilde al
-            let vscode = undefined;
-            try {
-                if (typeof acquireVsCodeApi === 'function') {
-                    vscode = acquireVsCodeApi();
-                    console.log('VS Code API başarıyla yüklendi');
-                } else {
-                    console.error('acquireVsCodeApi fonksiyonu bulunamadı');
-                }
-            } catch (error) {
-                console.error('VS Code API yüklenemedi:', error);
-                return;
+        const vscode = acquireVsCodeApi();
+        let isStreaming = false;
+        let streamStartTime = 0;
+        let tokenCount = 0;
+        let currentAssistantMessage = null;
+
+        console.log('VS Code API başarıyla yüklendi');
+
+        // DOM elementleri
+        const chatContainer = document.getElementById('chatContainer');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const cancelButton = document.getElementById('cancelButton');
+        const tokenStats = document.getElementById('tokenStats');
+        const selectedModelSpan = document.getElementById('selectedModel');
+
+        // Token hızını güncelleme
+        function updateTokenRate() {
+            if (isStreaming && tokenCount > 0) {
+                const duration = (Date.now() - streamStartTime) / 1000;
+                const rate = Math.round((tokenCount / duration) * 10) / 10;
+                document.getElementById('tokenRate').textContent = rate;
             }
+        }
 
-            // Eğer VS Code API'si yoksa işlemi sonlandır
-            if (!vscode) {
-                console.error('VS Code API bulunamadı');
-                return;
-            }
+        // Mesaj ekleme
+        function addMessage(content, role) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}-message`;
+            messageDiv.textContent = content;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return messageDiv;
+        }
 
-            console.log('Chat script başlatılıyor...');
+        // Stream başlatma
+        function startStream() {
+            isStreaming = true;
+            streamStartTime = Date.now();
+            tokenCount = 0;
+            sendButton.disabled = true;
+            cancelButton.classList.add('active');
+            tokenStats.classList.add('active');
+        }
 
-            const chatContainer = document.getElementById('chatContainer');
-            const messageInput = document.getElementById('messageInput');
-            const sendButton = document.getElementById('sendButton');
-            const selectedModelSpan = document.getElementById('selectedModel');
+        // Stream bitirme
+        function endStream() {
+            isStreaming = false;
+            sendButton.disabled = false;
+            cancelButton.classList.remove('active');
+            tokenStats.classList.remove('active');
+            currentAssistantMessage = null;
+        }
 
-            let selectedModel = '';
+        // Asistan mesajı başlatma
+        function startAssistantMessage() {
+            currentAssistantMessage = addMessage('', 'assistant');
+            startStream();
+        }
 
-            // Mesaj gönderme fonksiyonu
-            async function sendMessage() {
-                const message = messageInput.value.trim();
-                if (!message) return;
-
-                if (!selectedModel) {
-                    vscode.postMessage({
-                        type: 'error',
-                        message: 'Lütfen önce bir model seçin'
-                    });
-                    return;
-                }
-
-                // Kullanıcı mesajını ekle
-                addMessage(message, 'user');
-                messageInput.value = '';
-                sendButton.disabled = true;
-
-                try {
-                    vscode.postMessage({
-                        type: 'sendMessage',
-                        message: message
-                    });
-                } catch (error) {
-                    console.error('Mesaj gönderilirken hata:', error);
-                    sendButton.disabled = false;
-                }
-            }
-
-            // Mesaj ekleme fonksiyonu
-            function addMessage(content, role) {
-                const messageDiv = document.createElement('div');
-                messageDiv.className = `message ${role}-message`;
-                messageDiv.textContent = content;
-                chatContainer.appendChild(messageDiv);
+        // Token ekleme
+        function appendAssistantToken(token) {
+            if (currentAssistantMessage) {
+                currentAssistantMessage.textContent += token;
+                tokenCount++;
+                updateTokenRate();
                 chatContainer.scrollTop = chatContainer.scrollHeight;
             }
+        }
 
-            // Event listener'ları ekle
-            messageInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
+        // Stream iptali
+        function cancelStream() {
+            vscode.postMessage({ type: 'cancelStream' });
+        }
+
+        // Mesaj gönderme
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || isStreaming) return;
+
+            // Kullanıcı mesajını ekle
+            addMessage(message, 'user');
+            
+            // Mesaj input'unu temizle ve düğmeyi devre dışı bırak
+            messageInput.value = '';
+            sendButton.disabled = true;
+
+            // Mesajı VS Code'a gönder
+            vscode.postMessage({
+                type: 'sendMessage',
+                message: message
+            });
+        }
+
+        // Event listener'lar
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!isStreaming) {
                     sendMessage();
                 }
-            });
+            }
+        });
 
-            sendButton.addEventListener('click', sendMessage);
+        // VS Code'dan gelen mesajları dinle
+        window.addEventListener('message', event => {
+            const message = event.data;
+            console.log('Mesaj alındı:', message);
 
-            // VS Code'dan gelen mesajları dinle
-            window.addEventListener('message', (event) => {
-                const message = event.data;
-                console.log('VS Code\'dan mesaj alındı:', message);
+            switch (message.type) {
+                case 'addMessage':
+                    addMessage(message.content, message.role);
+                    break;
+                case 'startAssistantMessage':
+                    startAssistantMessage();
+                    break;
+                case 'appendAssistantToken':
+                    appendAssistantToken(message.token);
+                    break;
+                case 'endStream':
+                    endStream();
+                    break;
+                case 'streamCancelled':
+                    endStream();
+                    break;
+                case 'updateModel':
+                    selectedModelSpan.textContent = message.modelId;
+                    break;
+                case 'error':
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'error';
+                    errorDiv.textContent = message.message;
+                    chatContainer.appendChild(errorDiv);
+                    endStream();
+                    break;
+                case 'messageSent':
+                    sendButton.disabled = false;
+                    break;
+            }
+        });
 
-                switch (message.type) {
-                    case 'receiveMessage':
-                        addMessage(message.message, 'assistant');
-                        sendButton.disabled = false;
-                        break;
-                    case 'updateModel':
-                        selectedModel = message.modelId;
-                        selectedModelSpan.textContent = selectedModel || 'Model seçilmedi';
-                        console.log('Model güncellendi:', selectedModel);
-                        break;
-                    case 'error':
-                        vscode.postMessage({
-                            type: 'error',
-                            message: message.message
-                        });
-                        sendButton.disabled = false;
-                        break;
-                }
-            });
+        // Başlangıçta mevcut ayarları al
+        vscode.postMessage({ type: 'getCurrentSettings' });
 
-            // Başlangıçta mevcut ayarları al
-            vscode.postMessage({ type: 'getCurrentSettings' });
-        })();
+        console.log('Chat script başlatılıyor...');
     </script>
 </body>
 </html>

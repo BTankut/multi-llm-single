@@ -1,5 +1,5 @@
+import { OpenRouterService } from '../OpenRouterService';
 import * as vscode from 'vscode';
-import { OpenRouterService, Model, DEFAULT_MODEL } from '../OpenRouterService';
 import fetch from 'node-fetch';
 
 jest.mock('node-fetch');
@@ -167,7 +167,7 @@ describe('OpenRouterService', () => {
 
         it('kullanılamayan model için hata fırlatır ve varsayılan modele döner', async () => {
             await expect(service.setSelectedModel('model2')).rejects.toThrow('Seçilen model şu anda kullanılamıyor');
-            expect(mockMemento.update).toHaveBeenCalledWith('multiLLM.openRouter.model', DEFAULT_MODEL);
+            expect(mockMemento.update).toHaveBeenCalledWith('multiLLM.openRouter.model', 'model1');
         });
 
         it('var olmayan model için hata fırlatır', async () => {
@@ -202,13 +202,13 @@ describe('OpenRouterService', () => {
             });
 
             const modelId = await service.getSelectedModel();
-            expect(modelId).toBe(DEFAULT_MODEL);
+            expect(modelId).toBe('model1');
         });
 
         it('seçili model yoksa varsayılan modeli döndürür', async () => {
             mockMemento.get.mockReturnValue(undefined);
             const modelId = await service.getSelectedModel();
-            expect(modelId).toBe(DEFAULT_MODEL);
+            expect(modelId).toBe('model1');
         });
     });
 

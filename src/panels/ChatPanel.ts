@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { OpenRouterService } from '../services/OpenRouterService';
+import { RequestInit } from 'node-fetch';
 
 export class ChatPanel {
     public static currentPanel: ChatPanel | undefined;
@@ -9,6 +10,7 @@ export class ChatPanel {
     private _disposables: vscode.Disposable[] = [];
     private readonly _openRouterService: OpenRouterService;
     private readonly _outputChannel: vscode.OutputChannel;
+    private _abortController: { abort: () => void; signal: RequestInit['signal'] } | null = null;
 
     private constructor(
         panel: vscode.WebviewPanel,
@@ -119,6 +121,9 @@ export class ChatPanel {
                         case 'getCurrentSettings':
                             await this._handleGetCurrentSettings();
                             break;
+                        case 'cancelStream':
+                            await this._handleCancelStream();
+                            break;
                         default:
                             this._outputChannel.appendLine(`Bilinmeyen mesaj tipi: ${message.type}`);
                     }
@@ -135,15 +140,82 @@ export class ChatPanel {
     private async _handleSendMessage(message: string) {
         try {
             this._outputChannel.appendLine(`Mesaj gönderiliyor: ${message}`);
-            const response = await this._openRouterService.sendMessage(message);
+
+            // Önceki stream'i iptal et
+            if (this._abortController) {
+                this._abortController.abort();
+            }
+
+            // Yeni bir AbortController oluştur
+            const controller = new AbortController();
+            this._abortController = {
+                abort: () => controller.abort(),
+                signal: controller.signal as unknown as RequestInit['signal']
+            };
+
+            // Stream başlat
             await this._panel.webview.postMessage({
-                type: 'receiveMessage',
-                message: response
+                type: 'startAssistantMessage'
             });
-            this._outputChannel.appendLine('Mesaj başarıyla gönderildi');
+
+            try {
+                await this._openRouterService.sendMessageStream(message, {
+                    stream: true,
+                    signal: this._abortController.signal,
+                    onToken: async (token) => {
+                        try {
+                            await this._panel.webview.postMessage({
+                                type: 'appendAssistantToken',
+                                token
+                            });
+                        } catch (error) {
+                            this._outputChannel.appendLine(`Token gönderme hatası: ${error}`);
+                        }
+                    },
+                    onError: (error) => {
+                        this._outputChannel.appendLine(`Stream hatası: ${error}`);
+                        this._showError(`Stream hatası: ${error.message}`);
+                    }
+                });
+
+                // Stream tamamlandı
+                await this._panel.webview.postMessage({
+                    type: 'endStream'
+                });
+            } catch (error) {
+                this._outputChannel.appendLine(`Stream hatası: ${error}`);
+                if (error instanceof Error && error.name === 'AbortError') {
+                    this._outputChannel.appendLine('Stream iptal edildi');
+                    await this._panel.webview.postMessage({
+                        type: 'streamCancelled'
+                    });
+                } else {
+                    this._showError(`Stream hatası: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
+                    await this._panel.webview.postMessage({
+                        type: 'error',
+                        message: error instanceof Error ? error.message : 'Bilinmeyen hata'
+                    });
+                }
+            }
         } catch (error) {
-            this._outputChannel.appendLine(`Mesaj gönderilirken hata: ${error}`);
-            this._showError('Mesaj gönderilemedi');
+            this._outputChannel.appendLine(`Mesaj gönderme hatası: ${error}`);
+            this._showError(error instanceof Error ? error.message : 'Mesaj gönderilemedi');
+            await this._panel.webview.postMessage({
+                type: 'error',
+                message: error instanceof Error ? error.message : 'Mesaj gönderilemedi'
+            });
+        } finally {
+            this._abortController = null;
+            await this._panel.webview.postMessage({
+                type: 'messageSent'
+            });
+        }
+    }
+
+    private async _handleCancelStream() {
+        if (this._abortController) {
+            this._abortController.abort();
+            this._abortController = null;
         }
     }
 
