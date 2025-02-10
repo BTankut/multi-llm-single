@@ -1,5 +1,5 @@
-import { OpenRouterService, DEFAULT_MODEL } from '../OpenRouterService';
 import * as vscode from 'vscode';
+import { OpenRouterService, Model, DEFAULT_MODEL } from '../OpenRouterService';
 import fetch from 'node-fetch';
 
 jest.mock('node-fetch');
@@ -9,7 +9,15 @@ describe('OpenRouterService', () => {
     let mockSecretStorage: jest.Mocked<vscode.SecretStorage>;
     let mockMemento: jest.Mocked<vscode.Memento>;
     let realDateNow: () => number;
-    
+
+    const mockModels = {
+        data: [
+            { id: 'model1', name: 'Model 1', available: true, context_length: 4096 },
+            { id: 'model2', name: 'Model 2', available: false, context_length: 8192 },
+            { id: 'model3', name: 'Model 3', available: true, context_length: 4096 }
+        ]
+    };
+
     beforeEach(() => {
         mockSecretStorage = {
             store: jest.fn(),
@@ -23,23 +31,16 @@ describe('OpenRouterService', () => {
             update: jest.fn(),
             keys: jest.fn()
         };
-        
-        const mockContext = {
-            secrets: mockSecretStorage,
-            globalState: mockMemento
-        } as unknown as vscode.ExtensionContext;
-        
-        service = new OpenRouterService(mockContext);
 
-        // Date.now() mock'u için hazırlık
+        service = new OpenRouterService(mockSecretStorage, mockMemento);
+        
         realDateNow = Date.now;
-        const mockDate = new Date('2025-02-10T12:00:00Z');
-        global.Date.now = jest.fn(() => mockDate.getTime());
+        Date.now = jest.fn(() => 1625097600000); // Sabit bir zaman
     });
 
     afterEach(() => {
-        global.Date.now = realDateNow;
-        jest.resetAllMocks();
+        Date.now = realDateNow;
+        jest.clearAllMocks();
     });
 
     describe('saveApiKey', () => {
@@ -97,12 +98,6 @@ describe('OpenRouterService', () => {
 
     describe('listModels', () => {
         const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
-        const mockModels = {
-            data: [
-                { id: 'model1', name: 'Model 1', available: true, context_length: 4096 },
-                { id: 'model2', name: 'Model 2', available: false, context_length: 8192 }
-            ]
-        };
 
         beforeEach(() => {
             mockSecretStorage.get.mockResolvedValue('test-key');
@@ -156,17 +151,12 @@ describe('OpenRouterService', () => {
     });
 
     describe('setSelectedModel', () => {
-        const mockModels = [
-            { id: 'model1', name: 'Model 1', available: true, context_length: 4096 },
-            { id: 'model2', name: 'Model 2', available: false, context_length: 8192 }
-        ];
-
         beforeEach(() => {
             mockSecretStorage.get.mockResolvedValue('test-key');
             const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
             mockFetch.mockResolvedValue({
                 ok: true,
-                json: () => Promise.resolve({ data: mockModels })
+                json: () => Promise.resolve({ data: mockModels.data })
             } as any);
         });
 
@@ -186,17 +176,12 @@ describe('OpenRouterService', () => {
     });
 
     describe('getSelectedModel', () => {
-        const mockModels = [
-            { id: 'model1', name: 'Model 1', available: true, context_length: 4096 },
-            { id: 'model2', name: 'Model 2', available: false, context_length: 8192 }
-        ];
-
         beforeEach(() => {
             mockSecretStorage.get.mockResolvedValue('test-key');
             const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
             mockFetch.mockResolvedValue({
                 ok: true,
-                json: () => Promise.resolve({ data: mockModels })
+                json: () => Promise.resolve({ data: mockModels.data })
             } as any);
         });
 

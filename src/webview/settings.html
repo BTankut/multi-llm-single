@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi LLM Single Ayarları</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+        }
+
+        .settings-container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+        }
+
+        h2 {
+            margin-top: 0;
+            color: var(--vscode-editor-foreground);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--vscode-editor-foreground);
+        }
+
+        input, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid var(--vscode-input-border);
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        button {
+            padding: 8px 16px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .error {
+            color: var(--vscode-errorForeground);
+            margin-top: 5px;
+            font-size: 14px;
+        }
+
+        .success {
+            color: var(--vscode-notificationsInfoIcon-foreground);
+            margin-top: 5px;
+            font-size: 14px;
+        }
+
+        .model-info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: var(--vscode-descriptionForeground);
+        }
+    </style>
+</head>
+<body>
+    <div class="settings-container">
+        <div class="section">
+            <h2>OpenRouter API Ayarları</h2>
+            <div class="form-group">
+                <label for="apiKey">API Anahtarı</label>
+                <input type="password" id="apiKey" placeholder="OpenRouter API anahtarınızı girin">
+                <div class="button-group">
+                    <button id="showApiKey">Göster/Gizle</button>
+                    <button id="saveApiKey">Kaydet</button>
+                    <button id="testApiKey">Test Et</button>
+                </div>
+                <div id="apiKeyStatus"></div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Model Ayarları</h2>
+            <div class="form-group">
+                <label for="modelSelect">Varsayılan Model</label>
+                <select id="modelSelect">
+                    <option value="">Model seçin...</option>
+                </select>
+                <div class="model-info" id="modelInfo"></div>
+                <div class="button-group">
+                    <button id="refreshModels">Modelleri Yenile</button>
+                    <button id="saveModel">Kaydet</button>
+                </div>
+                <div id="modelStatus"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // VS Code API'sini güvenli bir şekilde al
+            let vscode = undefined;
+            try {
+                if (typeof acquireVsCodeApi === 'function') {
+                    vscode = acquireVsCodeApi();
+                    console.log('VS Code API başarıyla yüklendi');
+                } else {
+                    console.error('acquireVsCodeApi fonksiyonu bulunamadı');
+                }
+            } catch (error) {
+                console.error('VS Code API yüklenemedi:', error);
+                return;
+            }
+
+            // Eğer VS Code API'si yoksa işlemi sonlandır
+            if (!vscode) {
+                console.error('VS Code API bulunamadı');
+                return;
+            }
+
+            console.log('Script başlatılıyor...');
+
+            let currentApiKey = '';
+            let currentModelId = '';
+
+            // UI Elements
+            const apiKeyInput = document.getElementById('apiKey');
+            const showApiKeyButton = document.getElementById('showApiKey');
+            const saveApiKeyButton = document.getElementById('saveApiKey');
+            const testApiKeyButton = document.getElementById('testApiKey');
+            const apiKeyStatus = document.getElementById('apiKeyStatus');
+            const modelSelect = document.getElementById('modelSelect');
+            const modelInfo = document.getElementById('modelInfo');
+            const refreshModelsButton = document.getElementById('refreshModels');
+            const saveModelButton = document.getElementById('saveModel');
+            const modelStatus = document.getElementById('modelStatus');
+
+            // Mevcut ayarları yükle
+            vscode.postMessage({ type: 'getCurrentSettings' });
+
+            // API Key işlemleri
+            showApiKeyButton.addEventListener('click', () => {
+                if (apiKeyInput.type === 'password') {
+                    apiKeyInput.type = 'text';
+                } else {
+                    apiKeyInput.type = 'password';
+                }
+            });
+
+            saveApiKeyButton.addEventListener('click', () => {
+                const apiKey = apiKeyInput.value.trim();
+                if (!apiKey) {
+                    showError(apiKeyStatus, 'API anahtarı boş olamaz');
+                    return;
+                }
+                vscode.postMessage({ type: 'saveApiKey', apiKey });
+            });
+
+            testApiKeyButton.addEventListener('click', () => {
+                const apiKey = apiKeyInput.value.trim();
+                if (!apiKey) {
+                    showError(apiKeyStatus, 'API anahtarı boş olamaz');
+                    return;
+                }
+                vscode.postMessage({ type: 'testApiKey', apiKey });
+            });
+
+            // Model işlemleri
+            refreshModelsButton.addEventListener('click', () => {
+                loadModels();
+            });
+
+            saveModelButton.addEventListener('click', () => {
+                const modelId = modelSelect.value;
+                if (!modelId) {
+                    showError(modelStatus, 'Lütfen bir model seçin');
+                    return;
+                }
+                vscode.postMessage({ type: 'saveSelectedModel', modelId });
+            });
+
+            modelSelect.addEventListener('change', () => {
+                const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+                if (selectedOption.model) {
+                    const model = selectedOption.model;
+                    modelInfo.textContent = `Bağlam uzunluğu: ${model.context_length}, Fiyat: ${model.pricing?.prompt || 'N/A'} / ${model.pricing?.completion || 'N/A'}`;
+                } else {
+                    modelInfo.textContent = '';
+                }
+            });
+
+            function loadModels() {
+                modelSelect.innerHTML = '<option value="">Yükleniyor...</option>';
+                modelSelect.disabled = true;
+                refreshModelsButton.disabled = true;
+                vscode.postMessage({ type: 'getModels' });
+            }
+
+            function showError(element, message) {
+                element.className = 'error';
+                element.textContent = message;
+            }
+
+            function showSuccess(element, message) {
+                element.className = 'success';
+                element.textContent = message;
+            }
+
+            // VS Code'dan gelen mesajları dinle
+            window.addEventListener('message', event => {
+                const message = event.data;
+                switch (message.type) {
+                    case 'currentSettings':
+                        currentApiKey = message.settings.apiKey;
+                        currentModelId = message.settings.selectedModel;
+                        apiKeyInput.value = currentApiKey;
+                        loadModels();
+                        break;
+
+                    case 'apiKeySaved':
+                        showSuccess(apiKeyStatus, 'API anahtarı başarıyla kaydedildi');
+                        break;
+
+                    case 'apiKeyValid':
+                        showSuccess(apiKeyStatus, 'API anahtarı geçerli');
+                        loadModels();
+                        break;
+
+                    case 'models':
+                        modelSelect.innerHTML = '<option value="">Model seçin...</option>';
+                        message.models.forEach(model => {
+                            const option = document.createElement('option');
+                            option.value = model.id;
+                            option.textContent = `${model.name} (${model.pricing?.prompt || 'N/A'} / ${model.pricing?.completion || 'N/A'})`;
+                            option.model = model;
+                            if (model.id === currentModelId) {
+                                option.selected = true;
+                                modelInfo.textContent = `Bağlam uzunluğu: ${model.context_length}, Fiyat: ${model.pricing?.prompt || 'N/A'} / ${model.pricing?.completion || 'N/A'}`;
+                            }
+                            modelSelect.appendChild(option);
+                        });
+                        modelSelect.disabled = false;
+                        refreshModelsButton.disabled = false;
+                        break;
+
+                    case 'modelSaved':
+                        showSuccess(modelStatus, 'Model başarıyla kaydedildi');
+                        break;
+
+                    case 'error':
+                        const errorElement = message.source === 'api' ? apiKeyStatus : modelStatus;
+                        showError(errorElement, message.message);
+                        break;
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

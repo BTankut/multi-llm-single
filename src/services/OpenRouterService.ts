@@ -1,213 +1,192 @@
 import * as vscode from 'vscode';
 import fetch from 'node-fetch';
 
-export const API_VERSION = 'v1';
-const API_BASE_URL = 'https://openrouter.ai/api';
-export const DEFAULT_MODEL = 'anthropic/claude-2';
-const CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 saat
-
-export interface Model {
+interface OpenRouterModel {
     id: string;
     name: string;
-    description?: string;
-    pricing?: {
+    context_length: number;
+    pricing: {
         prompt: string;
         completion: string;
     };
-    context_length: number;
-    available: boolean;
 }
 
 export class OpenRouterService {
-    private static readonly API_KEY_SECRET = 'openrouter-api-key';
-    private static readonly SELECTED_MODEL_KEY = 'multiLLM.openRouter.model';
-    private static readonly MODELS_CACHE_KEY = 'openrouter-models-cache';
-    private static readonly MODELS_CACHE_TIMESTAMP_KEY = 'openrouter-models-cache-timestamp';
-    
-    private secretStorage: vscode.SecretStorage;
-    private memento: vscode.Memento;
-    private modelsCache: Model[] | null = null;
-    private modelsCacheTimestamp: number | null = null;
+    private readonly API_URL = 'https://openrouter.ai/api/v1';
+    private readonly API_KEY_SECRET = 'openrouter-api-key';
+    private readonly SELECTED_MODEL_KEY = 'openrouter-selected-model';
+    private readonly MODEL_CACHE_KEY = 'openrouter-models-cache';
+    private readonly MODEL_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 saat
+    private readonly outputChannel: vscode.OutputChannel;
 
-    constructor(context: vscode.ExtensionContext) {
-        this.secretStorage = context.secrets;
-        this.memento = context.globalState;
-        this.loadCacheFromMemento();
+    constructor(
+        private readonly secrets: vscode.SecretStorage,
+        private readonly state: vscode.Memento
+    ) {
+        this.outputChannel = vscode.window.createOutputChannel('Multi LLM Single');
     }
 
-    private loadCacheFromMemento(): void {
-        this.modelsCache = this.memento.get<Model[]>(OpenRouterService.MODELS_CACHE_KEY) || null;
-        this.modelsCacheTimestamp = this.memento.get<number>(OpenRouterService.MODELS_CACHE_TIMESTAMP_KEY) || null;
+    private log(message: string) {
+        this.outputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
     }
 
-    private async updateCache(models: Model[]): Promise<void> {
-        this.modelsCache = models;
-        this.modelsCacheTimestamp = Date.now();
-        await this.memento.update(OpenRouterService.MODELS_CACHE_KEY, models);
-        await this.memento.update(OpenRouterService.MODELS_CACHE_TIMESTAMP_KEY, this.modelsCacheTimestamp);
-    }
-
-    private isCacheValid(): boolean {
-        if (!this.modelsCache || !this.modelsCacheTimestamp) {
-            return false;
-        }
-        const age = Date.now() - this.modelsCacheTimestamp;
-        return age < CACHE_DURATION_MS;
-    }
-
-    async saveApiKey(key: string): Promise<void> {
-        if (!key) {
-            throw new Error('API anahtarı boş olamaz');
-        }
-        await this.secretStorage.store(OpenRouterService.API_KEY_SECRET, key);
-    }
-
-    async getApiKey(): Promise<string | undefined> {
-        return await this.secretStorage.get(OpenRouterService.API_KEY_SECRET);
-    }
-
-    async testApiKey(key: string): Promise<void> {
+    public async saveApiKey(apiKey: string): Promise<void> {
         try {
-            const response = await fetch(`${API_BASE_URL}/${API_VERSION}/auth/key`, {
+            this.log('API anahtarı kaydediliyor...');
+            await this.secrets.store(this.API_KEY_SECRET, apiKey);
+            this.log('API anahtarı başarıyla kaydedildi');
+        } catch (error) {
+            this.log(`API anahtarı kaydedilemedi: ${error}`);
+            throw error;
+        }
+    }
+
+    public async getApiKey(): Promise<string | undefined> {
+        try {
+            this.log('API anahtarı alınıyor...');
+            const apiKey = await this.secrets.get(this.API_KEY_SECRET);
+            this.log(apiKey ? 'API anahtarı bulundu' : 'API anahtarı bulunamadı');
+            return apiKey;
+        } catch (error) {
+            this.log(`API anahtarı alınamadı: ${error}`);
+            throw error;
+        }
+    }
+
+    public async testApiKey(apiKey: string): Promise<void> {
+        try {
+            this.log('API anahtarı test ediliyor...');
+            const response = await fetch(`${this.API_URL}/models`, {
                 headers: {
-                    'Authorization': `Bearer ${key}`,
-                    'Content-Type': 'application/json'
+                    'Authorization': `Bearer ${apiKey}`,
+                    'HTTP-Referer': 'https://github.com/btankut/multi-llm-single'
                 }
             });
 
             if (!response.ok) {
-                if (response.status === 401) {
-                    throw new Error('Geçersiz API anahtarı');
-                }
-                throw new Error(`API hatası: ${response.status} ${response.statusText}`);
+                const errorText = await response.text();
+                this.log(`API anahtarı geçersiz: ${response.status} ${response.statusText} - ${errorText}`);
+                throw new Error('API anahtarı geçersiz');
             }
+
+            this.log('API anahtarı geçerli');
         } catch (error) {
-            if (error instanceof Error) {
-                if (error.message.includes('fetch')) {
-                    throw new Error('Ağ bağlantı hatası');
-                }
-                throw error;
-            }
-            throw new Error('Bilinmeyen bir hata oluştu');
+            this.log(`API anahtarı test edilemedi: ${error}`);
+            throw new Error('API anahtarı test edilemedi: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
         }
     }
 
-    async listModels(): Promise<Model[]> {
-        if (this.isCacheValid() && this.modelsCache) {
-            return this.modelsCache;
-        }
-
+    public async setSelectedModel(modelId: string): Promise<void> {
         try {
+            this.log(`Model seçiliyor: ${modelId}`);
+            await this.state.update(this.SELECTED_MODEL_KEY, modelId);
+            this.log('Model başarıyla seçildi');
+        } catch (error) {
+            this.log(`Model seçilemedi: ${error}`);
+            throw error;
+        }
+    }
+
+    public async getSelectedModel(): Promise<string | undefined> {
+        try {
+            this.log('Seçili model alınıyor...');
+            const modelId = this.state.get<string>(this.SELECTED_MODEL_KEY);
+            this.log(modelId ? `Seçili model: ${modelId}` : 'Seçili model bulunamadı');
+            return modelId;
+        } catch (error) {
+            this.log(`Seçili model alınamadı: ${error}`);
+            throw error;
+        }
+    }
+
+    public async listModels(): Promise<OpenRouterModel[]> {
+        try {
+            this.log('Model listesi alınıyor...');
+            
+            const cachedModels = this.state.get<{ timestamp: number; models: OpenRouterModel[] }>(this.MODEL_CACHE_KEY);
+            if (cachedModels && Date.now() - cachedModels.timestamp < this.MODEL_CACHE_DURATION) {
+                this.log('Önbellekten model listesi alındı');
+                return cachedModels.models;
+            }
+
             const apiKey = await this.getApiKey();
             if (!apiKey) {
+                this.log('API anahtarı bulunamadı');
                 throw new Error('API anahtarı bulunamadı');
             }
 
-            const response = await fetch(`${API_BASE_URL}/${API_VERSION}/models`, {
+            this.log('OpenRouter API\'den modeller alınıyor...');
+            const response = await fetch(`${this.API_URL}/models`, {
                 headers: {
                     'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
+                    'HTTP-Referer': 'https://github.com/btankut/multi-llm-single'
                 }
             });
 
             if (!response.ok) {
-                throw new Error(`Model listesi alınamadı: ${response.status} ${response.statusText}`);
+                const errorText = await response.text();
+                this.log(`Model listesi alınamadı: ${response.status} ${response.statusText} - ${errorText}`);
+                throw new Error('Model listesi alınamadı');
             }
 
-            const data = await response.json() as { data: Model[] };
-            await this.updateCache(data.data);
-            return data.data;
+            const data = await response.json() as { data: OpenRouterModel[] };
+            const models = data.data;
+
+            this.log(`${models.length} model alındı`);
+            await this.state.update(this.MODEL_CACHE_KEY, {
+                timestamp: Date.now(),
+                models
+            });
+
+            return models;
         } catch (error) {
-            if (error instanceof Error) {
-                throw new Error(`Model listesi alınamadı: ${error.message}`);
-            }
-            throw new Error('Model listesi alınamadı: Bilinmeyen hata');
+            this.log(`Model listesi alınamadı: ${error}`);
+            throw new Error('Model listesi alınamadı: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
         }
     }
 
-    async setSelectedModel(modelId: string): Promise<void> {
-        const models = await this.listModels();
-        const model = models.find(m => m.id === modelId);
-
-        if (!model) {
-            throw new Error(`Model bulunamadı: ${modelId}`);
-        }
-
-        if (!model.available) {
-            console.warn(`Model kullanılamıyor: ${modelId}, varsayılan model kullanılacak: ${DEFAULT_MODEL}`);
-            await this.memento.update(OpenRouterService.SELECTED_MODEL_KEY, DEFAULT_MODEL);
-            throw new Error(`Seçilen model şu anda kullanılamıyor: ${modelId}`);
-        }
-
-        await this.memento.update(OpenRouterService.SELECTED_MODEL_KEY, modelId);
-    }
-
-    async getSelectedModel(): Promise<string> {
-        const modelId = this.memento.get<string>(OpenRouterService.SELECTED_MODEL_KEY);
-        if (!modelId) {
-            return DEFAULT_MODEL;
-        }
-
-        try {
-            const models = await this.listModels();
-            const model = models.find(m => m.id === modelId);
-
-            if (!model || !model.available) {
-                console.warn(`Seçili model kullanılamıyor: ${modelId}, varsayılan model kullanılacak: ${DEFAULT_MODEL}`);
-                return DEFAULT_MODEL;
-            }
-
-            return modelId;
-        } catch (error) {
-            console.warn(`Model durumu kontrol edilemedi, varsayılan model kullanılacak: ${DEFAULT_MODEL}`);
-            return DEFAULT_MODEL;
-        }
-    }
-
-    /**
-     * OpenRouter API'ye mesaj gönderir ve yanıtı alır
-     * @param message Gönderilecek mesaj
-     * @returns API'den gelen yanıt
-     * @throws Error API anahtarı eksikse veya istek başarısız olursa
-     */
     public async sendMessage(message: string): Promise<string> {
-        const apiKey = await this.getApiKey();
-        if (!apiKey) {
-            throw new Error('API anahtarı ayarlanmamış');
-        }
-
-        const modelId = await this.getSelectedModel();
-        
         try {
-            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            this.log('Mesaj gönderiliyor...');
+            
+            const apiKey = await this.getApiKey();
+            if (!apiKey) {
+                this.log('API anahtarı bulunamadı');
+                throw new Error('API anahtarı bulunamadı');
+            }
+
+            const selectedModel = await this.getSelectedModel();
+            if (!selectedModel) {
+                this.log('Model seçilmedi');
+                throw new Error('Model seçilmedi');
+            }
+
+            this.log(`Mesaj ${selectedModel} modeline gönderiliyor...`);
+            const response = await fetch(`${this.API_URL}/chat/completions`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiKey}`,
-                    'HTTP-Referer': 'https://github.com/BTankut/multi-llm-single',
-                    'X-Title': 'Multi LLM Single'
+                    'HTTP-Referer': 'https://github.com/btankut/multi-llm-single',
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    model: modelId,
-                    messages: [
-                        { role: 'user', content: message }
-                    ]
+                    model: selectedModel,
+                    messages: [{ role: 'user', content: message }]
                 })
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(`API hatası: ${error.message || response.statusText}`);
+                const errorText = await response.text();
+                this.log(`Mesaj gönderilemedi: ${response.status} ${response.statusText} - ${errorText}`);
+                throw new Error('Mesaj gönderilemedi');
             }
 
             const data = await response.json();
+            this.log('Mesaj başarıyla gönderildi');
             return data.choices[0].message.content;
-
         } catch (error) {
-            if (error instanceof Error) {
-                throw new Error(`Mesaj gönderilemedi: ${error.message}`);
-            }
-            throw new Error('Mesaj gönderilirken bilinmeyen bir hata oluştu');
+            this.log(`Mesaj gönderilemedi: ${error}`);
+            throw new Error('Mesaj gönderilemedi: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
         }
     }
 }

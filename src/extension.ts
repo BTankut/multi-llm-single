@@ -1,15 +1,20 @@
 import * as vscode from 'vscode';
-import { OpenRouterService } from './services/OpenRouterService';
 import { ChatPanel } from './panels/ChatPanel';
+import { SettingsPanel } from './panels/SettingsPanel';
+import { OpenRouterService } from './services/OpenRouterService';
 
 export function activate(context: vscode.ExtensionContext) {
     const openRouterService = new OpenRouterService(context.secrets, context.workspaceState);
 
-    let disposable = vscode.commands.registerCommand('multiLLM.openChat', () => {
-        ChatPanel.createOrShow(context.extensionUri, openRouterService, context.workspaceState);
+    let chatCommand = vscode.commands.registerCommand('multi-llm-single.openChat', () => {
+        ChatPanel.render(context.extensionUri, openRouterService);
     });
 
-    context.subscriptions.push(disposable);
+    let settingsCommand = vscode.commands.registerCommand('multi-llm-single.openSettings', () => {
+        SettingsPanel.createOrShow(context.extensionUri, openRouterService);
+    });
+
+    context.subscriptions.push(chatCommand, settingsCommand);
 }
 
 export function deactivate() {}
