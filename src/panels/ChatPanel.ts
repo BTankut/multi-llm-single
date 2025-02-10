@@ -171,6 +171,10 @@ export class ChatPanel {
                 }
                 this._panel.webview.postMessage({ type: 'streamCancelled' });
                 break;
+
+            case 'openSettings':
+                vscode.commands.executeCommand('multi-llm-single.openSettings');
+                break;
         }
     }
 

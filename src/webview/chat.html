@@ -112,13 +112,38 @@
             color: var(--vscode-errorForeground);
             margin-top: 0.5rem;
         }
+
+        .model-info {
+            padding: 10px;
+            background-color: var(--vscode-editor-background);
+            border-bottom: 1px solid var(--vscode-panel-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .settings-button {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .settings-button:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="model-info">
-            <span>Seçili Model: </span>
-            <span id="selectedModel">Model seçilmedi</span>
+            <div>
+                <span>Seçili Model: </span>
+                <span id="selectedModel">Model seçilmedi</span>
+            </div>
+            <button id="settingsButton" class="settings-button">Ayarlar</button>
         </div>
         <div class="chat-container">
             <div id="messageList" class="message-list"></div>
@@ -289,6 +314,11 @@
         });
 
         cancelButton.addEventListener('click', cancelStream);
+
+        // Ayarlar butonuna tıklama olayı
+        document.getElementById('settingsButton').addEventListener('click', () => {
+            vscode.postMessage({ type: 'openSettings' });
+        });
 
         // VS Code'dan gelen mesajları dinle
         window.addEventListener('message', event => {
