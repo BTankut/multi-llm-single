@@ -58,14 +58,16 @@
         }
 
         .token-stats {
-            font-size: 0.8rem;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 0.5rem;
+            position: fixed;
+            bottom: 80px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 1000;
             display: none;
-        }
-
-        .token-stats.active {
-            display: block;
         }
 
         .cancel-button {
@@ -106,7 +108,7 @@
             cursor: not-allowed;
         }
 
-        .error {
+        .error-message {
             color: var(--vscode-errorForeground);
             margin-top: 0.5rem;
         }
@@ -118,26 +120,27 @@
             <span>Seçili Model: </span>
             <span id="selectedModel">Model seçilmedi</span>
         </div>
-        <div class="chat-container" id="chatContainer"></div>
+        <div class="chat-container">
+            <div id="messageList" class="message-list"></div>
+            <div id="tokenStats" class="token-stats">
+                <span id="tokenCount">0 token</span> | <span id="tokenSpeed">0 token/s</span>
+            </div>
+        </div>
         <div class="input-container">
             <textarea id="messageInput" placeholder="Mesajınızı yazın..." rows="3"></textarea>
             <div class="button-container">
                 <button id="sendButton">Gönder</button>
-                <button id="cancelButton" class="cancel-button" onclick="cancelStream()">İptal</button>
+                <button id="cancelButton" class="cancel-button">İptal</button>
             </div>
-        </div>
-        <div class="token-stats" id="tokenStats">
-            <span>Token/saniye: </span>
-            <span id="tokenRate">0</span>
         </div>
     </div>
 
     <script>
         const vscode = acquireVsCodeApi();
         let isStreaming = false;
-        let streamStartTime = 0;
+        let startTime;
         let tokenCount = 0;
-        let currentAssistantMessage = null;
+        let tokenStatsInterval;
 
         console.log('VS Code API başarıyla yüklendi');
 
@@ -150,75 +153,117 @@
         const selectedModelSpan = document.getElementById('selectedModel');
 
         // Token hızını güncelleme
-        function updateTokenRate() {
-            if (isStreaming && tokenCount > 0) {
-                const duration = (Date.now() - streamStartTime) / 1000;
-                const rate = Math.round((tokenCount / duration) * 10) / 10;
-                document.getElementById('tokenRate').textContent = rate;
+        function updateTokenStats() {
+            const tokenStats = document.getElementById('tokenStats');
+            const tokenCountEl = document.getElementById('tokenCount');
+            const tokenSpeedEl = document.getElementById('tokenSpeed');
+            
+            if (isStreaming) {
+                const currentTime = Date.now();
+                const elapsedSeconds = (currentTime - startTime) / 1000;
+                const tokensPerSecond = (tokenCount / elapsedSeconds).toFixed(1);
+                
+                tokenCountEl.textContent = `${tokenCount} token`;
+                tokenSpeedEl.textContent = `${tokensPerSecond} token/s`;
+                tokenStats.style.display = 'block';
+            } else {
+                tokenStats.style.display = 'none';
             }
+        }
+
+        // Token sayacını başlat
+        function startTokenCounter() {
+            startTime = Date.now();
+            tokenCount = 0;
+            tokenStatsInterval = setInterval(updateTokenStats, 100);
+        }
+
+        // Token sayacını durdur
+        function stopTokenCounter() {
+            clearInterval(tokenStatsInterval);
+            updateTokenStats();
+            setTimeout(() => {
+                document.getElementById('tokenStats').style.display = 'none';
+            }, 2000);
         }
 
         // Mesaj ekleme
         function addMessage(content, role) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}-message`;
-            messageDiv.textContent = content;
-            chatContainer.appendChild(messageDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-            return messageDiv;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+            
+            messageDiv.appendChild(contentDiv);
+            document.getElementById('messageList').appendChild(messageDiv);
+            messageDiv.scrollIntoView({ behavior: 'smooth' });
+            
+            return contentDiv;
+        }
+
+        // Mesaj parçasını ekleme
+        function appendMessageChunk(content, messageElement) {
+            messageElement.innerHTML += content;
+            tokenCount += content.split(/\s+/).length; // Basit bir token sayımı
+            updateTokenStats();
         }
 
         // Stream başlatma
         function startStream() {
             isStreaming = true;
-            streamStartTime = Date.now();
-            tokenCount = 0;
             sendButton.disabled = true;
-            cancelButton.classList.add('active');
-            tokenStats.classList.add('active');
+            cancelButton.style.display = 'block';
         }
 
         // Stream bitirme
         function endStream() {
             isStreaming = false;
             sendButton.disabled = false;
-            cancelButton.classList.remove('active');
-            tokenStats.classList.remove('active');
-            currentAssistantMessage = null;
+            cancelButton.style.display = 'none';
         }
 
         // Asistan mesajı başlatma
         function startAssistantMessage() {
-            currentAssistantMessage = addMessage('', 'assistant');
+            const messageElement = addMessage('', 'assistant');
             startStream();
-        }
-
-        // Token ekleme
-        function appendAssistantToken(token) {
-            if (currentAssistantMessage) {
-                currentAssistantMessage.textContent += token;
-                tokenCount++;
-                updateTokenRate();
-                chatContainer.scrollTop = chatContainer.scrollHeight;
-            }
         }
 
         // Stream iptali
         function cancelStream() {
-            vscode.postMessage({ type: 'cancelStream' });
+            if (isStreaming) {
+                vscode.postMessage({ type: 'cancelStream' });
+            }
+        }
+
+        // Stream sonu
+        function handleStreamEnd() {
+            isStreaming = false;
+            messageInput.disabled = false;
+            sendButton.disabled = false;
+            cancelButton.style.display = 'none';
+            stopTokenCounter();
         }
 
         // Mesaj gönderme
         async function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
             const message = messageInput.value.trim();
-            if (!message || isStreaming) return;
 
-            // Kullanıcı mesajını ekle
+            if (!message || isStreaming) {
+                return;
+            }
+
+            // UI'ı güncelle
             addMessage(message, 'user');
-            
-            // Mesaj input'unu temizle ve düğmeyi devre dışı bırak
             messageInput.value = '';
+            messageInput.disabled = true;
             sendButton.disabled = true;
+            cancelButton.style.display = 'block';
+
+            // Token sayacını başlat
+            startTokenCounter();
 
             // Mesajı VS Code'a gönder
             vscode.postMessage({
@@ -237,46 +282,46 @@
             }
         });
 
-        // Gönder butonu için event listener
         sendButton.addEventListener('click', () => {
             if (!isStreaming) {
                 sendMessage();
             }
         });
 
+        cancelButton.addEventListener('click', cancelStream);
+
         // VS Code'dan gelen mesajları dinle
         window.addEventListener('message', event => {
             const message = event.data;
-            console.log('Mesaj alındı:', message);
 
             switch (message.type) {
-                case 'addMessage':
-                    addMessage(message.content, message.role);
-                    break;
                 case 'startAssistantMessage':
-                    startAssistantMessage();
+                    isStreaming = true;
+                    addMessage('', 'assistant');
                     break;
-                case 'appendAssistantToken':
-                    appendAssistantToken(message.token);
+
+                case 'appendMessageChunk':
+                    const messageElement = document.querySelector('.message-content:last-child');
+                    if (messageElement) {
+                        appendMessageChunk(message.content, messageElement);
+                    }
                     break;
+
                 case 'endStream':
-                    endStream();
-                    break;
                 case 'streamCancelled':
-                    endStream();
+                    handleStreamEnd();
                     break;
-                case 'updateModel':
-                    selectedModelSpan.textContent = message.modelId;
-                    break;
+
                 case 'error':
+                    handleStreamEnd();
                     const errorDiv = document.createElement('div');
-                    errorDiv.className = 'error';
+                    errorDiv.className = 'error-message';
                     errorDiv.textContent = message.message;
-                    chatContainer.appendChild(errorDiv);
-                    endStream();
+                    document.getElementById('messageList').appendChild(errorDiv);
                     break;
-                case 'messageSent':
-                    sendButton.disabled = false;
+
+                case 'updateModel':
+                    document.getElementById('selectedModel').textContent = message.modelId;
                     break;
             }
         });

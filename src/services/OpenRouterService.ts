@@ -212,108 +212,91 @@ export class OpenRouterService {
         return Promise.reject(new Error(`Bir hata oluştu: ${errorMessage}`));
     }
 
-    public async sendMessageStream(
-        message: string,
-        options: {
-            stream: boolean;
-            signal?: RequestInit['signal'];
-            onToken?: (token: string) => void;
-            onError?: (error: Error) => void;
+    public async sendMessage(message: string, signal?: AbortSignal): Promise<AsyncGenerator<string>> {
+        const apiKey = await this.getApiKey();
+        if (!apiKey) {
+            throw new Error('API anahtarı bulunamadı');
         }
-    ): Promise<void> {
-        try {
-            const apiKey = await this.getApiKey();
-            if (!apiKey) {
-                throw new Error('API anahtarı bulunamadı. Lütfen ayarlardan bir API anahtarı girin.');
+
+        const selectedModel = await this.getSelectedModel();
+        if (!selectedModel) {
+            throw new Error('Model seçilmedi');
+        }
+
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+                'HTTP-Referer': 'https://github.com/BTankut/multi-llm-single',
+                'X-Title': 'Multi LLM Single'
+            },
+            body: JSON.stringify({
+                model: selectedModel,
+                messages: [
+                    { role: 'user', content: message }
+                ],
+                stream: true
+            }),
+            signal: signal as RequestInit['signal']
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            let errorMessage = 'API erişim hatası';
+            
+            try {
+                const errorJson = JSON.parse(errorText);
+                errorMessage = errorJson.error?.message || errorJson.message || errorMessage;
+            } catch {
+                errorMessage = `${errorMessage}: ${errorText}`;
             }
 
-            const selectedModel = await this.getSelectedModel();
-            if (!selectedModel) {
-                throw new Error('Model seçilmedi. Lütfen bir model seçin.');
-            }
+            throw new Error(errorMessage);
+        }
 
-            this._outputChannel.appendLine(`İstek gönderiliyor - Model: ${selectedModel}`);
-            this._outputChannel.appendLine(`Mesaj: ${message}`);
+        if (!response.body) {
+            throw new Error('API yanıt vermedi');
+        }
 
-            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`,
-                    'HTTP-Referer': 'https://github.com/btk/multi-llm-single',
-                    'X-Title': 'Multi LLM Single'
-                },
-                body: JSON.stringify({
-                    model: selectedModel,
-                    messages: [{ role: 'user', content: message }],
-                    stream: options.stream
-                }),
-                signal: options.signal
-            });
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-            this._outputChannel.appendLine(`API yanıt durumu: ${response.status} ${response.statusText}`);
+        async function* streamGenerator() {
+            try {
+                // Node.js ReadableStream'i kullan
+                for await (const chunk of response.body) {
+                    const text = decoder.decode(chunk as Buffer);
+                    buffer += text;
 
-            if (!response.ok) {
-                await this.handleApiError({ response });
-            }
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
 
-            if (!response.body) {
-                throw new Error('API yanıt vermedi');
-            }
+                    for (const line of lines) {
+                        if (line.trim() === '') continue;
+                        if (line.trim() === 'data: [DONE]') return;
+                        if (!line.startsWith('data: ')) continue;
 
-            return new Promise((resolve, reject) => {
-                let buffer = '';
-                const decoder = new TextDecoder();
-
-                response.body.on('data', (chunk: Buffer) => {
-                    try {
-                        const text = decoder.decode(chunk);
-                        buffer += text;
-
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || '';
-
-                        for (const line of lines) {
-                            if (line.trim() === '') continue;
-                            if (!line.startsWith('data: ')) continue;
-
+                        try {
                             const data = line.slice(6);
-                            if (data === '[DONE]') continue;
-
-                            try {
-                                const parsed = JSON.parse(data);
-                                const token = parsed.choices[0]?.delta?.content || '';
-                                if (token && options.onToken) {
-                                    options.onToken(token);
-                                }
-                            } catch (error) {
-                                this._outputChannel.appendLine(`Token işleme hatası: ${error}`);
+                            const json = JSON.parse(data);
+                            const content = json.choices?.[0]?.delta?.content;
+                            if (content) {
+                                yield content;
                             }
+                        } catch (e) {
+                            console.error('JSON parse hatası:', e);
                         }
-                    } catch (error) {
-                        this._outputChannel.appendLine(`Chunk işleme hatası: ${error}`);
                     }
-                });
-
-                response.body.on('end', () => {
-                    this._outputChannel.appendLine('Stream tamamlandı');
-                    resolve();
-                });
-
-                response.body.on('error', (error) => {
-                    this._outputChannel.appendLine(`Stream hatası: ${error}`);
-                    reject(error);
-                });
-            });
-        } catch (error) {
-            if (error instanceof Error && error.name === 'AbortError') {
-                this._outputChannel.appendLine('Stream iptal edildi');
-                throw error;
+                }
+            } catch (error) {
+                if (error instanceof Error) {
+                    throw error;
+                }
+                throw new Error('Stream işleme hatası');
             }
-            if (options.onError) {
-                options.onError(error instanceof Error ? error : new Error(String(error)));
-            }
-            throw error;
         }
+
+        return streamGenerator();
     }
 }
