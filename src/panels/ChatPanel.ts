@@ -11,26 +11,30 @@ export class ChatPanel {
     public static currentPanel: ChatPanel | undefined;
     private static readonly viewType = 'multiLLM.chatPanel';
     private static readonly MESSAGES_KEY = 'multiLLM.chatMessages';
+    private static readonly MAX_MESSAGES = 20; // 10 çift (soru-cevap)
 
     private readonly _panel: vscode.WebviewPanel;
     private readonly _extensionUri: vscode.Uri;
+    private readonly _workspaceState: vscode.Memento;
     private _disposables: vscode.Disposable[] = [];
     private readonly _openRouterService: OpenRouterService;
     private readonly _outputChannel: vscode.OutputChannel;
 
-    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, openRouterService: OpenRouterService) {
+    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, openRouterService: OpenRouterService, workspaceState: vscode.Memento) {
         this._panel = panel;
         this._extensionUri = extensionUri;
         this._openRouterService = openRouterService;
+        this._workspaceState = workspaceState;
         this._outputChannel = vscode.window.createOutputChannel('Multi LLM');
 
         this._update();
         this._setWebviewMessageListener();
+        this._loadMessages();
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
     }
 
-    public static async createOrShow(extensionUri: vscode.Uri, openRouterService: OpenRouterService) {
+    public static async createOrShow(extensionUri: vscode.Uri, openRouterService: OpenRouterService, workspaceState: vscode.Memento) {
         const column = vscode.window.activeTextEditor
             ? vscode.window.activeTextEditor.viewColumn
             : undefined;
@@ -53,7 +57,7 @@ export class ChatPanel {
             }
         );
 
-        ChatPanel.currentPanel = new ChatPanel(panel, extensionUri, openRouterService);
+        ChatPanel.currentPanel = new ChatPanel(panel, extensionUri, openRouterService, workspaceState);
     }
 
     private async _update() {
@@ -123,11 +127,28 @@ export class ChatPanel {
         }
     }
 
+    private async _loadMessages() {
+        const messages = this._workspaceState.get<ChatMessage[]>(ChatPanel.MESSAGES_KEY, []);
+        messages.forEach(message => this._addMessage(message));
+    }
+
+    private _saveMessages(message: ChatMessage) {
+        let messages = this._workspaceState.get<ChatMessage[]>(ChatPanel.MESSAGES_KEY, []);
+        messages.push(message);
+        
+        if (messages.length > ChatPanel.MAX_MESSAGES) {
+            messages = messages.slice(-ChatPanel.MAX_MESSAGES);
+        }
+        
+        this._workspaceState.update(ChatPanel.MESSAGES_KEY, messages);
+    }
+
     private _addMessage(message: ChatMessage) {
         this._panel.webview.postMessage({
             type: 'addMessage',
             message
         });
+        this._saveMessages(message);
     }
 
     private _showError(message: string) {

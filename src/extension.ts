@@ -6,7 +6,7 @@ export function activate(context: vscode.ExtensionContext) {
     const openRouterService = new OpenRouterService(context.secrets, context.workspaceState);
 
     let disposable = vscode.commands.registerCommand('multiLLM.openChat', () => {
-        ChatPanel.createOrShow(context.extensionUri, openRouterService);
+        ChatPanel.createOrShow(context.extensionUri, openRouterService, context.workspaceState);
     });
 
     context.subscriptions.push(disposable);
