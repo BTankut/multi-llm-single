@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi LLM Sohbet</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+        }
+
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 40px);
+        }
+
+        .messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        .user-message {
+            background-color: var(--vscode-editor-selectionBackground);
+            margin-left: 20%;
+        }
+
+        .assistant-message {
+            background-color: var(--vscode-editor-inactiveSelectionBackground);
+            margin-right: 20%;
+        }
+
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+
+        #messageInput {
+            flex-grow: 1;
+            padding: 8px;
+            border: 1px solid var(--vscode-input-border);
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border-radius: 4px;
+        }
+
+        button {
+            padding: 8px 16px;
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        .error {
+            color: var(--vscode-errorForeground);
+            margin-bottom: 10px;
+        }
+
+        .system-message {
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+            text-align: center;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div id="messages" class="messages"></div>
+        <div class="input-container">
+            <input type="text" id="messageInput" placeholder="Mesajınızı yazın..." />
+            <button id="sendButton">Gönder</button>
+        </div>
+    </div>
+    <script>
+        const vscode = acquireVsCodeApi();
+        let previousState = vscode.getState() || { messages: [] };
+        const messagesContainer = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        let lastUserMessage = '';
+
+        // Önceki mesajları yükle
+        function loadMessages() {
+            messagesContainer.innerHTML = '';
+            previousState.messages.forEach(message => {
+                addMessageToUI(message);
+            });
+            scrollToBottom();
+        }
+
+        // Mesajı UI'a ekle
+        function addMessageToUI(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${message.role}-message`;
+            messageDiv.textContent = message.content;
+            messagesContainer.appendChild(messageDiv);
+        }
+
+        // En alta kaydır
+        function scrollToBottom() {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Mesaj gönder
+        function sendMessage() {
+            const content = messageInput.value.trim();
+            if (!content) return;
+
+            const message = {
+                role: 'user',
+                content: content
+            };
+
+            lastUserMessage = content;
+            messageInput.value = '';
+
+            addMessageToUI(message);
+            scrollToBottom();
+
+            // VS Code'a mesajı gönder
+            vscode.postMessage({
+                type: 'sendMessage',
+                message: content
+            });
+        }
+
+        // VS Code'dan gelen mesajları dinle
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.type) {
+                case 'addMessage':
+                    addMessageToUI(message.message);
+                    scrollToBottom();
+                    
+                    // State'i güncelle
+                    previousState.messages.push(message.message);
+                    if (previousState.messages.length > 20) { // 10 çift mesaj (soru-cevap)
+                        previousState.messages = previousState.messages.slice(-20);
+                    }
+                    vscode.setState(previousState);
+                    break;
+
+                case 'error':
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'error system-message';
+                    errorDiv.textContent = message.message;
+                    messagesContainer.appendChild(errorDiv);
+                    scrollToBottom();
+                    break;
+            }
+        });
+
+        // Event listeners
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp' && !messageInput.value) {
+                messageInput.value = lastUserMessage;
+            }
+        });
+
+        // İlk yükleme
+        loadMessages();
+    </script>
+</body>
+</html>

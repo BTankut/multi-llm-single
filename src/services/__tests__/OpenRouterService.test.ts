@@ -226,4 +226,59 @@ describe('OpenRouterService', () => {
             expect(modelId).toBe(DEFAULT_MODEL);
         });
     });
+
+    describe('sendMessage', () => {
+        it('mesajı başarıyla gönderir ve yanıt alır', async () => {
+            mockSecretStorage.get.mockResolvedValue('test-api-key');
+            mockMemento.get.mockReturnValue('test-model');
+
+            const mockResponse = {
+                choices: [
+                    {
+                        message: {
+                            content: 'Test yanıtı'
+                        }
+                    }
+                ]
+            };
+
+            const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
+            mockFetch.mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve(mockResponse)
+            } as any);
+
+            const response = await service.sendMessage('Test mesajı');
+            expect(response).toBe('Test yanıtı');
+            expect(mockFetch).toHaveBeenCalledWith(
+                'https://openrouter.ai/api/v1/chat/completions',
+                expect.objectContaining({
+                    method: 'POST',
+                    headers: expect.objectContaining({
+                        'Authorization': 'Bearer test-api-key'
+                    }),
+                    body: expect.stringContaining('Test mesajı')
+                })
+            );
+        });
+
+        it('API anahtarı eksikse hata fırlatır', async () => {
+            mockSecretStorage.get.mockResolvedValue(undefined);
+            await expect(service.sendMessage('Test mesajı')).rejects.toThrow('API anahtarı ayarlanmamış');
+        });
+
+        it('API hatası durumunda uygun hata fırlatır', async () => {
+            mockSecretStorage.get.mockResolvedValue('test-api-key');
+            mockMemento.get.mockReturnValue('test-model');
+
+            const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
+            mockFetch.mockResolvedValue({
+                ok: false,
+                statusText: 'Bad Request',
+                json: () => Promise.resolve({ message: 'API hatası' })
+            } as any);
+
+            await expect(service.sendMessage('Test mesajı')).rejects.toThrow('API hatası');
+        });
+    });
 });

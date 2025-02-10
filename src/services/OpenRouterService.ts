@@ -163,4 +163,51 @@ export class OpenRouterService {
             return DEFAULT_MODEL;
         }
     }
+
+    /**
+     * OpenRouter API'ye mesaj gönderir ve yanıtı alır
+     * @param message Gönderilecek mesaj
+     * @returns API'den gelen yanıt
+     * @throws Error API anahtarı eksikse veya istek başarısız olursa
+     */
+    public async sendMessage(message: string): Promise<string> {
+        const apiKey = await this.getApiKey();
+        if (!apiKey) {
+            throw new Error('API anahtarı ayarlanmamış');
+        }
+
+        const modelId = await this.getSelectedModel();
+        
+        try {
+            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                    'HTTP-Referer': 'https://github.com/BTankut/multi-llm-single',
+                    'X-Title': 'Multi LLM Single'
+                },
+                body: JSON.stringify({
+                    model: modelId,
+                    messages: [
+                        { role: 'user', content: message }
+                    ]
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(`API hatası: ${error.message || response.statusText}`);
+            }
+
+            const data = await response.json();
+            return data.choices[0].message.content;
+
+        } catch (error) {
+            if (error instanceof Error) {
+                throw new Error(`Mesaj gönderilemedi: ${error.message}`);
+            }
+            throw new Error('Mesaj gönderilirken bilinmeyen bir hata oluştu');
+        }
+    }
 }
