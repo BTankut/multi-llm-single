@@ -41,6 +41,19 @@ export class ChatPanel {
             null,
             this._disposables
         );
+
+        // Model değişikliklerini dinle
+        vscode.workspace.onDidChangeConfiguration(async e => {
+            if (e.affectsConfiguration('multi-llm-single.selectedModel')) {
+                const newModel = await this.openRouterService.getSelectedModel();
+                if (this._panel.webview) {
+                    await this._panel.webview.postMessage({
+                        command: 'updateModelInfo',
+                        modelId: newModel
+                    });
+                }
+            }
+        }, null, this._disposables);
     }
 
     private async initializeModel() {
