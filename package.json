@@ -15,13 +15,23 @@
         "commands": [
             {
                 "command": "multi-llm-single.openChat",
-                "title": "Multi LLM Single: Sohbet Aç"
+                "title": "Multi LLM Single: Chat'i Aç"
             },
             {
                 "command": "multi-llm-single.openSettings",
                 "title": "Multi LLM Single: Ayarları Aç"
             }
-        ]
+        ],
+        "configuration": {
+            "title": "Multi LLM Single",
+            "properties": {
+                "multi-llm-single.selectedModel": {
+                    "type": "string",
+                    "default": "openai/gpt-3.5-turbo",
+                    "description": "Seçili OpenRouter modeli"
+                }
+            }
+        }
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",
