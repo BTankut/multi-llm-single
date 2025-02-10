@@ -78,6 +78,7 @@ export class OpenRouterService {
 
     public async setSelectedModel(modelId: string): Promise<void> {
         await this.storage.update(this.SELECTED_MODEL_KEY, modelId);
+        await vscode.workspace.getConfiguration('multi-llm-single').update('selectedModel', modelId, true);
     }
 
     async saveApiKey(apiKey: string): Promise<void> {
