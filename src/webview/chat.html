@@ -122,7 +122,7 @@
         <div class="input-container">
             <textarea id="messageInput" placeholder="Mesajınızı yazın..." rows="3"></textarea>
             <div class="button-container">
-                <button id="sendButton" onclick="sendMessage()">Gönder</button>
+                <button id="sendButton">Gönder</button>
                 <button id="cancelButton" class="cancel-button" onclick="cancelStream()">İptal</button>
             </div>
         </div>
@@ -234,6 +234,13 @@
                 if (!isStreaming) {
                     sendMessage();
                 }
+            }
+        });
+
+        // Gönder butonu için event listener
+        sendButton.addEventListener('click', () => {
+            if (!isStreaming) {
+                sendMessage();
             }
         });
 
