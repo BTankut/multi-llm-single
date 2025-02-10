@@ -1,75 +1,131 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { OpenRouterService } from '../services/OpenRouterService';
-import { RequestInit } from 'node-fetch';
 
 export class ChatPanel {
-    public static currentPanel: ChatPanel | undefined;
+    private static currentPanel: ChatPanel | undefined;
+    private static readonly outputChannel = vscode.window.createOutputChannel('Multi LLM Single Chat');
     private readonly _panel: vscode.WebviewPanel;
     private readonly _extensionUri: vscode.Uri;
     private _disposables: vscode.Disposable[] = [];
-    private readonly _openRouterService: OpenRouterService;
-    private readonly _outputChannel: vscode.OutputChannel;
-    private _abortController: AbortController | null = null;
+    private openRouterService: OpenRouterService;
+    private selectedModel: string | undefined;
 
     private constructor(
         panel: vscode.WebviewPanel,
         extensionUri: vscode.Uri,
-        openRouterService: OpenRouterService
+        secrets: vscode.SecretStorage,
+        storage: vscode.Memento
     ) {
         this._panel = panel;
         this._extensionUri = extensionUri;
-        this._openRouterService = openRouterService;
-        this._outputChannel = vscode.window.createOutputChannel('Multi LLM Single Chat');
+        this.openRouterService = new OpenRouterService(secrets, storage);
 
-        // Panel HTML'ini ayarla
-        this._getHtmlForWebview(this._panel.webview).then(html => {
-            this._panel.webview.html = html;
+        ChatPanel.outputChannel.appendLine('Chat paneli başlatılıyor...');
+
+        // Model bilgisini al ve ayarla
+        this.initializeModel().then(() => {
+            ChatPanel.outputChannel.appendLine('Model bilgisi güncellendi');
         });
 
-        this._setWebviewMessageListener();
+        // HTML'i ayarla
+        this._getHtmlForWebview().then(html => {
+            this._panel.webview.html = html;
+            ChatPanel.outputChannel.appendLine('HTML ayarlandı');
+        });
 
-        // Panel kapatıldığında kaynakları temizle
+        // Event listener'ları ekle
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
-
-        // Başlangıçta mevcut ayarları al
-        this._initializeSettings();
+        this._panel.webview.onDidReceiveMessage(
+            message => this.handleWebviewMessage(message),
+            null,
+            this._disposables
+        );
     }
 
-    private async _initializeSettings() {
+    private async initializeModel() {
         try {
-            this._outputChannel.appendLine('Ayarlar başlatılıyor...');
-            const selectedModel = await this._openRouterService.getSelectedModel();
-            if (selectedModel) {
-                this._outputChannel.appendLine(`Seçili model: ${selectedModel}`);
+            const model = await this.openRouterService.getSelectedModel();
+            this.selectedModel = model;
+            ChatPanel.outputChannel.appendLine(`Başlangıç modeli: ${model}`);
+            
+            if (this._panel.webview) {
                 await this._panel.webview.postMessage({
-                    type: 'updateModel',
-                    modelId: selectedModel
+                    command: 'updateModelInfo',
+                    modelId: model
                 });
-            } else {
-                this._outputChannel.appendLine('Seçili model bulunamadı');
             }
         } catch (error) {
-            this._outputChannel.appendLine(`Ayarlar başlatılırken hata: ${error}`);
-            this._showError('Ayarlar yüklenirken bir hata oluştu');
+            ChatPanel.outputChannel.appendLine(`Model başlatma hatası: ${error}`);
+            vscode.window.showErrorMessage('Model başlatılamadı');
         }
     }
 
-    public static render(extensionUri: vscode.Uri, openRouterService: OpenRouterService) {
-        if (ChatPanel.currentPanel) {
-            ChatPanel.currentPanel._panel.reveal(vscode.ViewColumn.One);
-        } else {
-            const panel = vscode.window.createWebviewPanel(
-                'chatPanel',
-                'Multi LLM Single Chat',
-                vscode.ViewColumn.One,
-                {
-                    enableScripts: true,
-                    localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'src', 'webview')]
-                }
-            );
+    private async handleWebviewMessage(message: any) {
+        ChatPanel.outputChannel.appendLine(`WebView mesajı alındı: ${JSON.stringify(message)}`);
+        
+        try {
+            switch (message.command) {
+                case 'openSettings':
+                    ChatPanel.outputChannel.appendLine('Ayarlar açılıyor...');
+                    await vscode.commands.executeCommand('multi-llm-single.openSettings');
+                    break;
 
-            ChatPanel.currentPanel = new ChatPanel(panel, extensionUri, openRouterService);
+                case 'sendMessage':
+                    if (message.text?.trim()) {
+                        await this.handleUserMessage(message.text);
+                    }
+                    break;
+
+                default:
+                    ChatPanel.outputChannel.appendLine(`Bilinmeyen komut: ${message.command}`);
+            }
+        } catch (error) {
+            ChatPanel.outputChannel.appendLine(`Mesaj işleme hatası: ${error}`);
+            vscode.window.showErrorMessage(`İşlem hatası: ${error}`);
+        }
+    }
+
+    private async handleUserMessage(content: string) {
+        try {
+            ChatPanel.outputChannel.appendLine(`Kullanıcı mesajı alındı: ${content}`);
+
+            // Asistan mesajını başlat
+            await this._panel.webview.postMessage({
+                command: 'addMessage',
+                content: '',
+                type: 'assistant'
+            });
+
+            // Stream'i başlat
+            ChatPanel.outputChannel.appendLine('Stream başlatılıyor...');
+            const messages = [{ role: 'user', content }];
+            
+            try {
+                for await (const chunk of this.openRouterService.streamChat(messages)) {
+                    if (this._panel.webview) {
+                        await this._panel.webview.postMessage({
+                            command: 'appendMessageChunk',
+                            content: chunk
+                        });
+                    }
+                }
+                ChatPanel.outputChannel.appendLine('Stream başarıyla tamamlandı');
+            } catch (streamError) {
+                ChatPanel.outputChannel.appendLine(`Stream hatası: ${streamError}`);
+                throw streamError;
+            }
+
+            // Stream'i sonlandır
+            if (this._panel.webview) {
+                await this._panel.webview.postMessage({
+                    command: 'streamEnd'
+                });
+            }
+
+        } catch (error) {
+            ChatPanel.outputChannel.appendLine(`Hata: ${error}`);
+            vscode.window.showErrorMessage(`Hata: ${error}`);
         }
     }
 
@@ -82,22 +138,33 @@ export class ChatPanel {
         return text;
     }
 
-    private async _getHtmlForWebview(webview: vscode.Webview) {
+    private async _getHtmlForWebview() {
         const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'chat.html');
         let html = fs.readFileSync(htmlPath.fsPath, 'utf8');
 
-        // VS Code API'sini ekle
         const nonce = this._getNonce();
+        const webview = this._panel.webview;
 
-        // CSP (Content Security Policy) ekle
-        const cspSource = webview.cspSource;
+        // CSP ayarlarını ekle
+        const csp = `
+            default-src 'none';
+            style-src ${webview.cspSource} 'unsafe-inline';
+            script-src 'nonce-${nonce}';
+            img-src ${webview.cspSource} https:;
+            font-src ${webview.cspSource};
+        `;
+
+        // CSP'yi ekle
         html = html.replace(
             '</head>',
-            `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+            `<meta http-equiv="Content-Security-Policy" content="${csp.replace(/\s+/g, ' ')}">
+            <script nonce="${nonce}">
+                const vscode = acquireVsCodeApi();
+            </script>
             </head>`
         );
 
-        // VS Code API'sini ve ana scripti ekle
+        // Script tag'lerini güncelle
         html = html.replace(
             '<script>',
             `<script nonce="${nonce}">`
@@ -106,126 +173,34 @@ export class ChatPanel {
         return html;
     }
 
-    private _setWebviewMessageListener() {
-        this._panel.webview.onDidReceiveMessage(
-            async (message: any) => {
-                try {
-                    this._outputChannel.appendLine(`Webview mesajı alındı: ${JSON.stringify(message)}`);
-                    await this.handleMessage(message);
-                } catch (error) {
-                    this._outputChannel.appendLine(`Mesaj işlenirken hata: ${error}`);
-                    this._showError(error instanceof Error ? error.message : 'Bilinmeyen bir hata oluştu');
+    public static async render(
+        extensionUri: vscode.Uri,
+        secrets: vscode.SecretStorage,
+        storage: vscode.Memento
+    ) {
+        if (ChatPanel.currentPanel) {
+            ChatPanel.currentPanel._panel.reveal(vscode.ViewColumn.One);
+        } else {
+            const panel = vscode.window.createWebviewPanel(
+                'chatPanel',
+                'OpenRouter Chat',
+                vscode.ViewColumn.One,
+                {
+                    enableScripts: true,
+                    retainContextWhenHidden: true,
+                    localResourceRoots: [
+                        vscode.Uri.joinPath(extensionUri, 'src', 'webview')
+                    ]
                 }
-            },
-            null,
-            this._disposables
-        );
-    }
+            );
 
-    private async handleMessage(message: any) {
-        switch (message.type) {
-            case 'sendMessage':
-                try {
-                    // Önceki stream'i iptal et
-                    if (this._abortController) {
-                        this._abortController.abort();
-                    }
-
-                    // Yeni bir AbortController oluştur
-                    this._abortController = new AbortController();
-
-                    // Mesaj gönderme işlemi başladı
-                    this._panel.webview.postMessage({ type: 'startAssistantMessage' });
-
-                    // OpenRouter servisini çağır
-                    const stream = await this._openRouterService.sendMessage(
-                        message.message,
-                        this._abortController.signal
-                    );
-                    
-                    // Stream'i işle
-                    for await (const chunk of stream) {
-                        if (this._abortController?.signal.aborted) {
-                            break;
-                        }
-                        await this.handleStreamChunk(chunk);
-                    }
-
-                    // Stream bitti
-                    this._panel.webview.postMessage({ type: 'endStream' });
-                } catch (error: any) {
-                    console.error('Mesaj gönderme hatası:', error);
-                    this._panel.webview.postMessage({
-                        type: 'error',
-                        message: error.message || 'Bilinmeyen bir hata oluştu'
-                    });
-                } finally {
-                    this._abortController = null;
-                }
-                break;
-
-            case 'cancelStream':
-                if (this._abortController) {
-                    this._abortController.abort();
-                    this._abortController = null;
-                }
-                this._panel.webview.postMessage({ type: 'streamCancelled' });
-                break;
-
-            case 'openSettings':
-                vscode.commands.executeCommand('multi-llm-single.openSettings');
-                break;
+            ChatPanel.currentPanel = new ChatPanel(panel, extensionUri, secrets, storage);
         }
-    }
-
-    private async handleStreamChunk(chunk: string) {
-        if (this._panel.visible) {
-            this._panel.webview.postMessage({
-                type: 'appendMessageChunk',
-                content: chunk
-            });
-        }
-    }
-
-    private async _handleUpdateModel(modelId: string) {
-        try {
-            this._outputChannel.appendLine(`Model güncelleniyor: ${modelId}`);
-            await this._openRouterService.setSelectedModel(modelId);
-            this._outputChannel.appendLine('Model başarıyla güncellendi');
-        } catch (error) {
-            this._outputChannel.appendLine(`Model güncellenirken hata: ${error}`);
-            this._showError('Model güncellenemedi');
-        }
-    }
-
-    private async _handleGetCurrentSettings() {
-        try {
-            this._outputChannel.appendLine('Mevcut ayarlar alınıyor...');
-            const selectedModel = await this._openRouterService.getSelectedModel();
-            if (selectedModel) {
-                this._outputChannel.appendLine(`Seçili model: ${selectedModel}`);
-                await this._panel.webview.postMessage({
-                    type: 'updateModel',
-                    modelId: selectedModel
-                });
-            } else {
-                this._outputChannel.appendLine('Seçili model bulunamadı');
-            }
-        } catch (error) {
-            this._outputChannel.appendLine(`Ayarlar alınırken hata: ${error}`);
-            this._showError('Ayarlar alınamadı');
-        }
-    }
-
-    private _showError(message: string) {
-        vscode.window.showErrorMessage(message);
     }
 
     public dispose() {
         ChatPanel.currentPanel = undefined;
-
         this._panel.dispose();
-
         while (this._disposables.length) {
             const disposable = this._disposables.pop();
             if (disposable) {

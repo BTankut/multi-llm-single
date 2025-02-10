@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import fetch, { RequestInit } from 'node-fetch';
+import fetch, { RequestInit, Response } from 'node-fetch';
 import { window } from 'vscode';
 import { StreamOptions, OpenRouterModel } from '../types';
 
@@ -39,10 +39,16 @@ interface CustomReadableStream<R = any> {
     cancel(reason?: any): Promise<void>;
 }
 
+interface ChatMessage {
+    role: string;
+    content: string;
+}
+
 export class OpenRouterService {
     private readonly API_URL = 'https://openrouter.ai/api/v1';
     private readonly API_KEY_SECRET = 'openrouter-api-key';
-    private readonly MODEL_KEY = 'openrouter-selected-model';
+    private readonly SELECTED_MODEL_KEY = 'selected-model';
+    private readonly DEFAULT_MODEL = 'openai/gpt-3.5-turbo';
     private readonly _outputChannel: vscode.OutputChannel;
     private readonly secrets: vscode.SecretStorage;
     private readonly storage: vscode.Memento;
@@ -57,8 +63,21 @@ export class OpenRouterService {
         this._outputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
     }
 
-    async getApiKey(): Promise<string | undefined> {
-        return this.secrets.get(this.API_KEY_SECRET);
+    public async getApiKey(): Promise<string | undefined> {
+        return await this.secrets.get(this.API_KEY_SECRET);
+    }
+
+    public async setApiKey(apiKey: string): Promise<void> {
+        await this.secrets.store(this.API_KEY_SECRET, apiKey);
+    }
+
+    public async getSelectedModel(): Promise<string> {
+        const model = await this.storage.get<string>(this.SELECTED_MODEL_KEY);
+        return model || this.DEFAULT_MODEL;
+    }
+
+    public async setSelectedModel(modelId: string): Promise<void> {
+        await this.storage.update(this.SELECTED_MODEL_KEY, modelId);
     }
 
     async saveApiKey(apiKey: string): Promise<void> {
@@ -67,20 +86,6 @@ export class OpenRouterService {
             this.log('API anahtarı başarıyla kaydedildi');
         } catch (error) {
             this.log(`API anahtarı kaydedilirken hata: ${error}`);
-            throw error;
-        }
-    }
-
-    async getSelectedModel(): Promise<string | undefined> {
-        return this.storage.get(this.MODEL_KEY);
-    }
-
-    async setSelectedModel(modelId: string): Promise<void> {
-        try {
-            await this.storage.update(this.MODEL_KEY, modelId);
-            this.log(`Model başarıyla güncellendi: ${modelId}`);
-        } catch (error) {
-            this.log(`Model güncellenirken hata: ${error}`);
             throw error;
         }
     }
@@ -212,91 +217,99 @@ export class OpenRouterService {
         return Promise.reject(new Error(`Bir hata oluştu: ${errorMessage}`));
     }
 
-    public async sendMessage(message: string, signal?: AbortSignal): Promise<AsyncGenerator<string>> {
+    private async *streamResponse(response: Response): AsyncGenerator<string, void, unknown> {
+        if (!response.body) {
+            throw new Error('Response body is null');
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+            for await (const chunk of response.body) {
+                if (Buffer.isBuffer(chunk)) {
+                    buffer += decoder.decode(new Uint8Array(chunk));
+                } else {
+                    buffer += chunk.toString();
+                }
+
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.trim() === '') continue;
+                    if (line.trim() === 'data: [DONE]') return;
+
+                    try {
+                        if (line.startsWith('data: ')) {
+                            const jsonStr = line.slice(6);
+                            const json = JSON.parse(jsonStr);
+                            if (json.choices?.[0]?.delta?.content) {
+                                yield json.choices[0].delta.content;
+                            }
+                        }
+                    } catch (error) {
+                        console.error('JSON parse hatası:', error);
+                        console.error('Problematik satır:', line);
+                    }
+                }
+            }
+
+            if (buffer) {
+                try {
+                    if (buffer.startsWith('data: ')) {
+                        const jsonStr = buffer.slice(6);
+                        const json = JSON.parse(jsonStr);
+                        if (json.choices?.[0]?.delta?.content) {
+                            yield json.choices[0].delta.content;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Son buffer parse hatası:', error);
+                }
+            }
+        } catch (error) {
+            console.error('Stream okuma hatası:', error);
+            throw error;
+        }
+    }
+
+    public async *streamChat(messages: ChatMessage[]): AsyncGenerator<string, void, unknown> {
+        const selectedModel = await this.getSelectedModel();
+        console.log('Seçili model:', selectedModel);
+
         const apiKey = await this.getApiKey();
         if (!apiKey) {
+            console.error('API anahtarı bulunamadı');
             throw new Error('API anahtarı bulunamadı');
         }
 
-        const selectedModel = await this.getSelectedModel();
-        if (!selectedModel) {
-            throw new Error('Model seçilmedi');
-        }
+        console.log('API isteği gönderiliyor...');
+        console.log('Model:', selectedModel);
+        console.log('Mesajlar:', messages);
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`,
-                'HTTP-Referer': 'https://github.com/BTankut/multi-llm-single',
+                'HTTP-Referer': 'http://localhost:3000',
                 'X-Title': 'Multi LLM Single'
             },
             body: JSON.stringify({
                 model: selectedModel,
-                messages: [
-                    { role: 'user', content: message }
-                ],
+                messages: messages,
                 stream: true
-            }),
-            signal: signal as RequestInit['signal']
+            })
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            let errorMessage = 'API erişim hatası';
-            
-            try {
-                const errorJson = JSON.parse(errorText);
-                errorMessage = errorJson.error?.message || errorJson.message || errorMessage;
-            } catch {
-                errorMessage = `${errorMessage}: ${errorText}`;
-            }
-
-            throw new Error(errorMessage);
+            console.error('API hatası:', response.status, errorText);
+            throw new Error(`HTTP hatası! Durum: ${response.status}`);
         }
 
-        if (!response.body) {
-            throw new Error('API yanıt vermedi');
-        }
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        async function* streamGenerator() {
-            try {
-                // Node.js ReadableStream'i kullan
-                for await (const chunk of response.body) {
-                    const text = decoder.decode(chunk as Buffer);
-                    buffer += text;
-
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || '';
-
-                    for (const line of lines) {
-                        if (line.trim() === '') continue;
-                        if (line.trim() === 'data: [DONE]') return;
-                        if (!line.startsWith('data: ')) continue;
-
-                        try {
-                            const data = line.slice(6);
-                            const json = JSON.parse(data);
-                            const content = json.choices?.[0]?.delta?.content;
-                            if (content) {
-                                yield content;
-                            }
-                        } catch (e) {
-                            console.error('JSON parse hatası:', e);
-                        }
-                    }
-                }
-            } catch (error) {
-                if (error instanceof Error) {
-                    throw error;
-                }
-                throw new Error('Stream işleme hatası');
-            }
-        }
-
-        return streamGenerator();
+        console.log('API yanıtı alındı, stream başlıyor...');
+        yield* this.streamResponse(response);
     }
 }

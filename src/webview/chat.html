@@ -6,360 +6,266 @@
     <title>Multi LLM Single Chat</title>
     <style>
         body {
-            padding: 0;
             margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            padding: 0;
+            height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
 
         .container {
             display: flex;
             flex-direction: column;
             height: 100vh;
-            padding: 1rem;
-            box-sizing: border-box;
+            background: var(--vscode-editor-background);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--vscode-editor-background);
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .model-info {
+            color: var(--vscode-foreground);
+            font-size: 14px;
+        }
+
+        .settings-button {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .settings-button:hover {
+            background: var(--vscode-button-hoverBackground);
         }
 
         .chat-container {
             flex: 1;
             overflow-y: auto;
-            margin-bottom: 1rem;
-            padding: 1rem;
-            border: 1px solid var(--vscode-input-border);
-            border-radius: 4px;
+            padding: 16px;
+        }
+
+        .message-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            max-width: 800px;
+            margin: 0 auto;
         }
 
         .message {
-            margin-bottom: 1rem;
-            padding: 0.5rem;
-            border-radius: 4px;
-            white-space: pre-wrap;
-            word-wrap: break-word;
+            padding: 12px 16px;
+            border-radius: 8px;
+            max-width: 85%;
         }
 
         .user-message {
-            background-color: var(--vscode-editor-background);
-            border: 1px solid var(--vscode-input-border);
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            align-self: flex-end;
         }
 
         .assistant-message {
-            background-color: var(--vscode-editor-inactiveSelectionBackground);
-            border: 1px solid var(--vscode-input-border);
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            color: var(--vscode-editor-foreground);
+            align-self: flex-start;
         }
 
         .input-container {
+            padding: 16px;
+            background: var(--vscode-editor-background);
+            border-top: 1px solid var(--vscode-panel-border);
+        }
+
+        .input-wrapper {
             display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
+            gap: 8px;
+            max-width: 800px;
+            margin: 0 auto;
         }
 
-        .button-container {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .token-stats {
-            position: fixed;
-            bottom: 80px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 5px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-            z-index: 1000;
-            display: none;
-        }
-
-        .cancel-button {
-            background-color: var(--vscode-errorForeground);
-            display: none;
-        }
-
-        .cancel-button.active {
-            display: block;
-        }
-
-        textarea {
+        #messageInput {
             flex: 1;
-            padding: 0.5rem;
+            padding: 8px 12px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
             border: 1px solid var(--vscode-input-border);
             border-radius: 4px;
-            background-color: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
+            font-family: inherit;
+            font-size: 14px;
             resize: none;
-            min-height: 60px;
+            min-height: 20px;
+            max-height: 150px;
         }
 
-        button {
-            padding: 0.5rem 1rem;
-            background-color: var(--vscode-button-background);
+        .send-button {
+            background: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
             border: none;
+            padding: 8px 16px;
             border-radius: 4px;
             cursor: pointer;
+            font-size: 14px;
+            min-width: 80px;
         }
 
-        button:hover {
-            background-color: var(--vscode-button-hoverBackground);
+        .send-button:hover {
+            background: var(--vscode-button-hoverBackground);
         }
 
-        button:disabled {
-            opacity: 0.5;
+        .send-button:disabled {
+            opacity: 0.6;
             cursor: not-allowed;
-        }
-
-        .error-message {
-            color: var(--vscode-errorForeground);
-            margin-top: 0.5rem;
-        }
-
-        .model-info {
-            padding: 10px;
-            background-color: var(--vscode-editor-background);
-            border-bottom: 1px solid var(--vscode-panel-border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .settings-button {
-            background-color: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-            border: none;
-            padding: 4px 8px;
-            border-radius: 3px;
-            cursor: pointer;
-        }
-
-        .settings-button:hover {
-            background-color: var(--vscode-button-secondaryHoverBackground);
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="model-info">
-            <div>
-                <span>Seçili Model: </span>
-                <span id="selectedModel">Model seçilmedi</span>
+        <div class="header">
+            <div class="model-info">
+                <span id="modelId">Model seçilmedi</span>
             </div>
-            <button id="settingsButton" class="settings-button">Ayarlar</button>
+            <button class="settings-button" id="settingsButton">
+                ⚙️ Ayarlar
+            </button>
         </div>
+
         <div class="chat-container">
-            <div id="messageList" class="message-list"></div>
-            <div id="tokenStats" class="token-stats">
-                <span id="tokenCount">0 token</span> | <span id="tokenSpeed">0 token/s</span>
-            </div>
+            <div class="message-list" id="messageList"></div>
         </div>
+
         <div class="input-container">
-            <textarea id="messageInput" placeholder="Mesajınızı yazın..." rows="3"></textarea>
-            <div class="button-container">
-                <button id="sendButton">Gönder</button>
-                <button id="cancelButton" class="cancel-button">İptal</button>
+            <div class="input-wrapper">
+                <textarea 
+                    id="messageInput"
+                    placeholder="Mesajınızı yazın..."
+                    rows="1"
+                ></textarea>
+                <button class="send-button" id="sendButton">
+                    Gönder
+                </button>
             </div>
         </div>
     </div>
 
     <script>
-        const vscode = acquireVsCodeApi();
+        let state = { messages: [] };
         let isStreaming = false;
-        let startTime;
-        let tokenCount = 0;
-        let tokenStatsInterval;
 
-        console.log('VS Code API başarıyla yüklendi');
-
-        // DOM elementleri
-        const chatContainer = document.getElementById('chatContainer');
+        // DOM Elements
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
-        const cancelButton = document.getElementById('cancelButton');
-        const tokenStats = document.getElementById('tokenStats');
-        const selectedModelSpan = document.getElementById('selectedModel');
+        const messageList = document.getElementById('messageList');
+        const settingsButton = document.getElementById('settingsButton');
 
-        // Token hızını güncelleme
-        function updateTokenStats() {
-            const tokenStats = document.getElementById('tokenStats');
-            const tokenCountEl = document.getElementById('tokenCount');
-            const tokenSpeedEl = document.getElementById('tokenSpeed');
-            
-            if (isStreaming) {
-                const currentTime = Date.now();
-                const elapsedSeconds = (currentTime - startTime) / 1000;
-                const tokensPerSecond = (tokenCount / elapsedSeconds).toFixed(1);
-                
-                tokenCountEl.textContent = `${tokenCount} token`;
-                tokenSpeedEl.textContent = `${tokensPerSecond} token/s`;
-                tokenStats.style.display = 'block';
-            } else {
-                tokenStats.style.display = 'none';
-            }
-        }
-
-        // Token sayacını başlat
-        function startTokenCounter() {
-            startTime = Date.now();
-            tokenCount = 0;
-            tokenStatsInterval = setInterval(updateTokenStats, 100);
-        }
-
-        // Token sayacını durdur
-        function stopTokenCounter() {
-            clearInterval(tokenStatsInterval);
-            updateTokenStats();
-            setTimeout(() => {
-                document.getElementById('tokenStats').style.display = 'none';
-            }, 2000);
-        }
-
-        // Mesaj ekleme
-        function addMessage(content, role) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${role}-message`;
-            
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            contentDiv.textContent = content;
-            
-            messageDiv.appendChild(contentDiv);
-            document.getElementById('messageList').appendChild(messageDiv);
-            messageDiv.scrollIntoView({ behavior: 'smooth' });
-            
-            return contentDiv;
-        }
-
-        // Mesaj parçasını ekleme
-        function appendMessageChunk(content, messageElement) {
-            messageElement.innerHTML += content;
-            tokenCount += content.split(/\s+/).length; // Basit bir token sayımı
-            updateTokenStats();
-        }
-
-        // Stream başlatma
-        function startStream() {
-            isStreaming = true;
-            sendButton.disabled = true;
-            cancelButton.style.display = 'block';
-        }
-
-        // Stream bitirme
-        function endStream() {
-            isStreaming = false;
-            sendButton.disabled = false;
-            cancelButton.style.display = 'none';
-        }
-
-        // Asistan mesajı başlatma
-        function startAssistantMessage() {
-            const messageElement = addMessage('', 'assistant');
-            startStream();
-        }
-
-        // Stream iptali
-        function cancelStream() {
-            if (isStreaming) {
-                vscode.postMessage({ type: 'cancelStream' });
-            }
-        }
-
-        // Stream sonu
-        function handleStreamEnd() {
-            isStreaming = false;
-            messageInput.disabled = false;
-            sendButton.disabled = false;
-            cancelButton.style.display = 'none';
-            stopTokenCounter();
-        }
-
-        // Mesaj gönderme
-        async function sendMessage() {
-            const messageInput = document.getElementById('messageInput');
-            const message = messageInput.value.trim();
-
-            if (!message || isStreaming) {
-                return;
-            }
-
-            // UI'ı güncelle
-            addMessage(message, 'user');
-            messageInput.value = '';
-            messageInput.disabled = true;
-            sendButton.disabled = true;
-            cancelButton.style.display = 'block';
-
-            // Token sayacını başlat
-            startTokenCounter();
-
-            // Mesajı VS Code'a gönder
-            vscode.postMessage({
-                type: 'sendMessage',
-                message: message
-            });
-        }
-
-        // Event listener'lar
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (!isStreaming) {
-                    sendMessage();
-                }
-            }
-        });
-
-        sendButton.addEventListener('click', () => {
-            if (!isStreaming) {
+        // Event Listeners
+        messageInput.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
                 sendMessage();
             }
         });
 
-        cancelButton.addEventListener('click', cancelStream);
+        sendButton.addEventListener('click', sendMessage);
+        settingsButton.addEventListener('click', openSettings);
 
-        // Ayarlar butonuna tıklama olayı
-        document.getElementById('settingsButton').addEventListener('click', () => {
-            vscode.postMessage({ type: 'openSettings' });
-        });
+        // Functions
+        function openSettings() {
+            console.log('Ayarlar açılıyor...');
+            vscode.postMessage({
+                command: 'openSettings'
+            });
+        }
 
-        // VS Code'dan gelen mesajları dinle
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || isStreaming) return;
+
+            console.log('Mesaj gönderiliyor:', message);
+            vscode.postMessage({
+                command: 'sendMessage',
+                text: message
+            });
+
+            addMessage(message, 'user');
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            startStream();
+        }
+
+        function addMessage(content, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}-message`;
+            messageDiv.textContent = content;
+            messageList.appendChild(messageDiv);
+            messageDiv.scrollIntoView({ behavior: 'smooth' });
+
+            // Mesajı state'e kaydet
+            state.messages.push({ content, type });
+            vscode.setState(state);
+        }
+
+        function startStream() {
+            isStreaming = true;
+            sendButton.disabled = true;
+        }
+
+        function endStream() {
+            isStreaming = false;
+            sendButton.disabled = false;
+        }
+
+        // Message Handler
         window.addEventListener('message', event => {
             const message = event.data;
+            console.log('Alınan mesaj:', message);
 
-            switch (message.type) {
-                case 'startAssistantMessage':
-                    isStreaming = true;
-                    addMessage('', 'assistant');
+            switch (message.command) {
+                case 'addMessage':
+                    addMessage(message.content, message.type);
                     break;
-
                 case 'appendMessageChunk':
-                    const messageElement = document.querySelector('.message-content:last-child');
-                    if (messageElement) {
-                        appendMessageChunk(message.content, messageElement);
+                    const lastMessage = messageList.lastElementChild;
+                    if (lastMessage && lastMessage.classList.contains('assistant-message')) {
+                        lastMessage.textContent += message.content;
+                        lastMessage.scrollIntoView({ behavior: 'smooth' });
                     }
                     break;
-
-                case 'endStream':
-                case 'streamCancelled':
-                    handleStreamEnd();
+                case 'streamEnd':
+                    endStream();
                     break;
-
-                case 'error':
-                    handleStreamEnd();
-                    const errorDiv = document.createElement('div');
-                    errorDiv.className = 'error-message';
-                    errorDiv.textContent = message.message;
-                    document.getElementById('messageList').appendChild(errorDiv);
-                    break;
-
-                case 'updateModel':
-                    document.getElementById('selectedModel').textContent = message.modelId;
+                case 'updateModelInfo':
+                    document.getElementById('modelId').textContent = message.modelId || 'Model seçilmedi';
                     break;
             }
         });
 
-        // Başlangıçta mevcut ayarları al
-        vscode.postMessage({ type: 'getCurrentSettings' });
+        // Textarea auto-resize
+        messageInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+        });
 
-        console.log('Chat script başlatılıyor...');
+        // Önceki mesajları yükle
+        const savedState = vscode.getState();
+        if (savedState && savedState.messages) {
+            state = savedState;
+            state.messages.forEach(msg => {
+                addMessage(msg.content, msg.type);
+            });
+        }
     </script>
 </body>
 </html>
