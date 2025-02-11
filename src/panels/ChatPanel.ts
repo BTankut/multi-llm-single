@@ -78,7 +78,7 @@ export class ChatPanel {
         ChatPanel.outputChannel.appendLine(`WebView mesajı alındı: ${JSON.stringify(message)}`);
         
         try {
-            switch (message.command) {
+            switch (message.type || message.command) {
                 case 'openSettings':
                     ChatPanel.outputChannel.appendLine('Ayarlar açılıyor...');
                     await vscode.commands.executeCommand('multi-llm-single.openSettings');
@@ -91,15 +91,21 @@ export class ChatPanel {
                     break;
 
                 case 'abort':
+                    ChatPanel.outputChannel.appendLine('Stream durduruluyor...');
                     this.openRouterService.abortStream();
                     break;
 
                 default:
-                    ChatPanel.outputChannel.appendLine(`Bilinmeyen komut: ${message.command}`);
+                    ChatPanel.outputChannel.appendLine(`Bilinmeyen mesaj: ${JSON.stringify(message)}`);
             }
         } catch (error) {
             ChatPanel.outputChannel.appendLine(`Mesaj işleme hatası: ${error}`);
-            vscode.window.showErrorMessage(`İşlem hatası: ${error}`);
+            if (this._panel.webview) {
+                await this._panel.webview.postMessage({
+                    type: 'error',
+                    message: error instanceof Error ? error.message : 'Bilinmeyen hata'
+                });
+            }
         }
     }
 
