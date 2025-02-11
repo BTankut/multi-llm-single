@@ -113,13 +113,13 @@ export class OpenRouterService {
         }
     }
 
-    async listModels(): Promise<OpenRouterModel[]> {
-        const apiKey = await this.getApiKey();
-        if (!apiKey) {
-            throw new Error('API anahtarı bulunamadı');
-        }
-
+    async getModels(): Promise<OpenRouterModel[]> {
         try {
+            const apiKey = await this.getApiKey();
+            if (!apiKey) {
+                throw new Error('API anahtarı bulunamadı');
+            }
+
             const response = await fetch(`${this.API_URL}/models`, {
                 headers: {
                     'Authorization': `Bearer ${apiKey}`,
@@ -129,11 +129,19 @@ export class OpenRouterService {
             });
 
             if (!response.ok) {
-                throw new Error(`API hatası: ${response.status} ${response.statusText}`);
+                throw new Error(`Model listesi alınamadı: ${response.statusText}`);
             }
 
             const data = await response.json() as OpenRouterModelsResponse;
-            return data.data;
+            
+            // Fiyatları düzenle
+            return data.data.map(model => ({
+                ...model,
+                pricing: {
+                    prompt: `$${(Number(model.pricing.prompt) / 1000000).toFixed(4)}`,
+                    completion: `$${(Number(model.pricing.completion) / 1000000).toFixed(4)}`
+                }
+            }));
         } catch (error) {
             this.log(`Model listesi alınırken hata: ${error}`);
             throw error;

@@ -134,7 +134,7 @@ export class SettingsPanel {
 
     private async _handleGetModels() {
         try {
-            const models = await this._openRouterService.listModels();
+            const models = await this._openRouterService.getModels();
             this._panel.webview.postMessage({ type: 'models', models });
         } catch (error) {
             this._showError('Model listesi alınamadı: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
