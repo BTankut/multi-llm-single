@@ -52,6 +52,7 @@ export class OpenRouterService {
     private readonly _outputChannel: vscode.OutputChannel;
     private readonly secrets: vscode.SecretStorage;
     private readonly storage: vscode.Memento;
+    private currentAbortController: { abort: () => void, signal: any } | null = null;
 
     constructor(secrets: vscode.SecretStorage, storage: vscode.Memento) {
         this._outputChannel = vscode.window.createOutputChannel('Multi LLM Single Chat');
@@ -283,42 +284,68 @@ export class OpenRouterService {
         }
     }
 
+    public abortStream() {
+        if (this.currentAbortController) {
+            this.currentAbortController.abort();
+            this.currentAbortController = null;
+            this.log('Stream durduruldu');
+        }
+    }
+
     public async *streamChat(messages: ChatMessage[]): AsyncGenerator<string, void, unknown> {
-        const selectedModel = await this.getSelectedModel();
-        console.log('Seçili model:', selectedModel);
+        try {
+            // Önceki stream'i iptal et
+            if (this.currentAbortController) {
+                this.currentAbortController.abort();
+            }
 
-        const apiKey = await this.getApiKey();
-        if (!apiKey) {
-            console.error('API anahtarı bulunamadı');
-            throw new Error('API anahtarı bulunamadı');
+            // Yeni bir AbortController oluştur
+            this.currentAbortController = new AbortController();
+
+            const selectedModel = await this.getSelectedModel();
+            console.log('Seçili model:', selectedModel);
+
+            const apiKey = await this.getApiKey();
+            if (!apiKey) {
+                console.error('API anahtarı bulunamadı');
+                throw new Error('API anahtarı bulunamadı');
+            }
+
+            console.log('API isteği gönderiliyor...');
+            console.log('Model:', selectedModel);
+            console.log('Mesajlar:', messages);
+
+            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                    'HTTP-Referer': 'http://localhost:3000',
+                    'X-Title': 'Multi LLM Single'
+                },
+                body: JSON.stringify({
+                    model: selectedModel,
+                    messages: messages,
+                    stream: true
+                }),
+                signal: this.currentAbortController.signal
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('API hatası:', response.status, errorText);
+                throw new Error(`HTTP hatası! Durum: ${response.status}`);
+            }
+
+            console.log('API yanıtı alındı, stream başlıyor...');
+            yield* this.streamResponse(response);
+        } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') {
+                throw new Error('İşlem kullanıcı tarafından durduruldu');
+            }
+            throw error;
+        } finally {
+            this.currentAbortController = null;
         }
-
-        console.log('API isteği gönderiliyor...');
-        console.log('Model:', selectedModel);
-        console.log('Mesajlar:', messages);
-
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`,
-                'HTTP-Referer': 'http://localhost:3000',
-                'X-Title': 'Multi LLM Single'
-            },
-            body: JSON.stringify({
-                model: selectedModel,
-                messages: messages,
-                stream: true
-            })
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('API hatası:', response.status, errorText);
-            throw new Error(`HTTP hatası! Durum: ${response.status}`);
-        }
-
-        console.log('API yanıtı alındı, stream başlıyor...');
-        yield* this.streamResponse(response);
     }
 }

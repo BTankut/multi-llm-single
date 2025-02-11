@@ -101,6 +101,7 @@
             padding: 16px;
             background: var(--vscode-editor-background);
             border-top: 1px solid var(--vscode-panel-border);
+            position: relative;
         }
 
         .input-wrapper {
@@ -110,18 +111,24 @@
             margin: 0 auto;
         }
 
-        #messageInput {
+        .message-input {
             flex: 1;
+            min-height: 40px;
+            max-height: 120px;
             padding: 8px 12px;
             background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
             border: 1px solid var(--vscode-input-border);
             border-radius: 4px;
+            resize: vertical;
             font-family: inherit;
             font-size: 14px;
-            resize: none;
-            min-height: 20px;
-            max-height: 150px;
+            line-height: 1.4;
+        }
+
+        .message-input:focus {
+            outline: none;
+            border-color: var(--vscode-focusBorder);
         }
 
         .send-button {
@@ -132,15 +139,41 @@
             border-radius: 4px;
             cursor: pointer;
             font-size: 14px;
+            height: 40px;
             min-width: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .stop-button {
+            background: var(--vscode-errorForeground);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            height: 40px;
+            min-width: 80px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .stop-button:hover {
+            opacity: 0.9;
         }
 
         .send-button:hover {
             background: var(--vscode-button-hoverBackground);
         }
 
-        .send-button:disabled {
-            opacity: 0.6;
+        .send-button:disabled,
+        .stop-button:disabled {
+            opacity: 0.5;
             cursor: not-allowed;
         }
     </style>
@@ -152,7 +185,7 @@
                 <span id="modelId">Model seçilmedi</span>
             </div>
             <button class="settings-button" id="settingsButton">
-                ⚙️ Ayarlar
+                Ayarlar
             </button>
         </div>
 
@@ -165,13 +198,17 @@
 
         <div class="input-container">
             <div class="input-wrapper">
-                <textarea 
-                    id="messageInput"
-                    placeholder="Mesajınızı yazın..."
-                    rows="1"
-                ></textarea>
-                <button class="send-button" id="sendButton">
-                    Gönder
+                <textarea class="message-input" placeholder="Bir mesaj yazın..." rows="1"></textarea>
+                <button class="send-button" title="Gönder">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+                <button class="stop-button" title="Durdur">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    </svg>
                 </button>
             </div>
         </div>
@@ -185,11 +222,12 @@
         let tokenStatsInterval;
 
         // DOM Elements
-        const messageInput = document.getElementById('messageInput');
-        const sendButton = document.getElementById('sendButton');
+        const messageInput = document.querySelector('.message-input');
+        const sendButton = document.querySelector('.send-button');
+        const stopButton = document.querySelector('.stop-button');
         const messageList = document.getElementById('messageList');
         const settingsButton = document.getElementById('settingsButton');
-        const tokenStats = document.getElementById('tokenStats');
+        const tokenStats = document.querySelector('.token-stats');
 
         // Token hızını güncelleme
         function updateTokenStats() {
@@ -230,11 +268,16 @@
         messageInput.addEventListener('keydown', function(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                sendMessage();
+                if (!isStreaming) {
+                    sendMessage();
+                }
+            } else if (event.key === 'Escape' && isStreaming) {
+                abortStream();
             }
         });
 
         sendButton.addEventListener('click', sendMessage);
+        stopButton.addEventListener('click', abortStream);
         settingsButton.addEventListener('click', openSettings);
 
         // Functions
@@ -276,13 +319,24 @@
 
         function startStream() {
             isStreaming = true;
-            sendButton.disabled = true;
+            sendButton.style.display = 'none';
+            stopButton.style.display = 'flex';
+            messageInput.disabled = true;
         }
 
         function endStream() {
             isStreaming = false;
-            sendButton.disabled = false;
+            sendButton.style.display = 'flex';
+            stopButton.style.display = 'none';
+            messageInput.disabled = false;
             stopTokenCounter();
+        }
+
+        function abortStream() {
+            if (isStreaming) {
+                vscode.postMessage({ type: 'abort' });
+                endStream();
+            }
         }
 
         // Message Handler
@@ -315,7 +369,7 @@
         // Textarea auto-resize
         messageInput.addEventListener('input', function() {
             this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
         });
 
         // Önceki mesajları yükle

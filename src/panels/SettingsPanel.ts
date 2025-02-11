@@ -99,6 +99,9 @@ export class SettingsPanel {
                         case 'getCurrentSettings':
                             await this._handleGetCurrentSettings();
                             break;
+                        case 'abort':
+                            this._openRouterService.abortStream();
+                            break;
                         default:
                             console.error('Bilinmeyen mesaj tipi:', message.type);
                     }
