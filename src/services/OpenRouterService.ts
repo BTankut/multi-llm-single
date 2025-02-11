@@ -138,8 +138,8 @@ export class OpenRouterService {
             return data.data.map(model => ({
                 ...model,
                 pricing: {
-                    prompt: `$${(Number(model.pricing.prompt) * 1000000).toFixed(4)}`,
-                    completion: `$${(Number(model.pricing.completion) * 1000000).toFixed(4)}`
+                    prompt: `$${(Number(model.pricing.prompt) * 1000000).toFixed(1)}`,
+                    completion: `$${(Number(model.pricing.completion) * 1000000).toFixed(1)}`
                 }
             }));
         } catch (error) {
