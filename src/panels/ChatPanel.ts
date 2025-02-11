@@ -90,6 +90,10 @@ export class ChatPanel {
                     }
                     break;
 
+                case 'abort':
+                    this.openRouterService.abortStream();
+                    break;
+
                 default:
                     ChatPanel.outputChannel.appendLine(`Bilinmeyen komut: ${message.command}`);
             }
